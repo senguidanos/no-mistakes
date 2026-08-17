@@ -279,12 +279,9 @@ func renderArtifactCountLine(count int, opts testingSummaryOptions) string {
 	if count == 0 {
 		return ""
 	}
-	noun := "artifact(s)"
-	switch count {
-	case 1:
+	noun := "artifacts"
+	if count == 1 {
 		noun = "artifact"
-	default:
-		noun = "artifacts"
 	}
 	line := fmt.Sprintf("- Evidence: %d %s recorded locally", count, noun)
 	// The local directory is the operator's only rendered route back to the
