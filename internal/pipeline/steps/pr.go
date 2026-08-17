@@ -234,7 +234,7 @@ func (s *PRStep) buildPipelineSection(sctx *pipeline.StepContext, provider scm.P
 	}
 
 	pipelineMD, riskLine = BuildPipelineSummaryFor(steps, rounds, sctx.Run.HeadSHA, provider)
-	testingMD = BuildTestingSummaryForPRWithProvider(steps, rounds, sctx.Repo.UpstreamURL, sctx.Run.HeadSHA, sctx.WorkDir, testEvidenceDir(sctx), publishRunEvidence(sctx), provider)
+	testingMD = BuildTestingSummaryForPRWithProvider(steps, rounds, sctx.Repo.UpstreamURL, sctx.Run.HeadSHA, sctx.WorkDir, testEvidenceDir(sctx), publishRunEvidence(sctx), provider, sctx.Config.Test.Evidence.PRDetail)
 	return pipelineMD, riskLine, testingMD
 }
 

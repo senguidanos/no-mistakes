@@ -96,8 +96,8 @@ effects, so exiting should not be too easy once those side effects exist.
 
 When you leave branch name or commit subject blank, the wizard invokes the configured agent (global or per-repo `agent` setting, including fallback lists) to produce a suggestion. The agent sees the local diff and returns:
 
-- A kebab-case branch name prefixed with a type (`feat/`, `fix/`, `chore/`, etc.)
-- A conventional-commit subject line, using `feat` or `fix` for user-facing product impact so release automation can pick it up
+- A kebab-case branch name: `sc-<number>-<description>` when the change has a Shortcut story, otherwise prefixed with a type (`feat/`, `fix/`, `chore/`, etc.)
+- A commit subject line in the configured [title format](/no-mistakes/reference/global-config/#title). Under the default `exfresso` style the agent reads the story number from the current branch and omits the prefix when there is none; under `title.style: conventional` it writes a conventional-commit subject, using `feat` or `fix` for user-facing product impact so release automation can pick it up
 
 The managed agent server (Rovo Dev or OpenCode) writes its output to `~/.no-mistakes/logs/wizard-agent.log` during these runs.
 

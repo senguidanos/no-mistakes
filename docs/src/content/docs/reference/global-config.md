@@ -399,6 +399,61 @@ The final rendered subject is validated again, so unsafe characters in an agent-
 The setting does not change commit subjects created by the Rebase, CI, or Push steps.
 A per-repo [`commit.fix_message`](/no-mistakes/reference/repo-config/#commitfix_message) value overrides this global setting.
 
+### title
+
+Pull-request title format. The setting also drives the commit-subject suggestion in `no-mistakes wizard`.
+
+| | |
+| --- | --- |
+| Type | `object` |
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `title.style` | `string` | `exfresso` | Which title convention to apply |
+| `title.pattern` | `string` | (none) | Regexp a compliant title must match; honoured only when `style: custom` |
+| `title.branch_token` | `string` | (none) | Regexp with exactly one capture group, read from the branch name; honoured only when `style: custom` |
+| `title.template` | `string` | (none) | Template rendered from `{{.Token}}` and `{{.Description}}`; required when `branch_token` is set |
+| `title.prompt_rule` | `string` | (none) | Format instruction handed to the drafting agent |
+
+#### Styles
+
+| Style | Behaviour |
+| --- | --- |
+| `exfresso` | `[sc-<number>] <description>`, where the story number is read from the branch name (`sc-1234-dim-weight-rounding` gives `[sc-1234]`) |
+| `conventional` | Conventional Commits: `type(scope): description`, with a type inferred from the wording when the agent omits one. This reproduces upstream no-mistakes behaviour exactly |
+| `free` | No validation and no rewriting. The agent receives no format rule and whatever it drafts is used verbatim |
+| `custom` | Your own `pattern`, `branch_token`, and `template` |
+
+`exfresso` is equivalent to a `custom` style with `pattern: '(?i)^\[sc-(\d+)\] .+$'`, `branch_token: '(?i)sc-(\d+)'`, and `template: '[sc-{{.Token}}] {{.Description}}'`, plus a built-in prompt rule.
+
+#### Normalization
+
+Every style that has a pattern normalizes a drafted title the same way:
+
+1. Trim. An empty title stays empty.
+2. A title that already matches `pattern` is returned **byte-identical**. A compliant title is never rewritten.
+3. Otherwise, when `branch_token` is set and the branch name yields a capture, `template` is rendered with that token and the title.
+4. Otherwise the trimmed title is returned unchanged.
+
+A token is never invented: a branch carrying no token produces a title with no prefix, because a wrong story reference is worse than a missing one.
+The `conventional` style is the one exception to step 3 - it prefixes an inferred type rather than reading the branch - and the `free` style skips normalization entirely.
+
+#### Validation
+
+`pattern` and `branch_token` are each limited to 512 bytes and must compile.
+Go's regexp engine is RE2, so a supplied pattern cannot backtrack catastrophically, but a pattern that fails to compile fails configuration loading rather than silently disabling title validation.
+`branch_token` must have exactly one capture group; zero or more than one fails the config with the offending key and value.
+`template` follows the same rules as [`commit.fix_message`](#commitfix_message): a 1,024-byte source limit, a 16-placeholder limit, single-line rendered output, and rejection of template functions, control actions, unknown placeholders, control characters, unsafe Unicode format characters, and Unicode line or paragraph separators.
+Only `{{.Token}}` and `{{.Description}}` are known placeholders.
+`template` is required when `branch_token` is set and is rejected without it.
+A `custom` style requires a `pattern`.
+
+`title.prompt_rule` is limited to 4,096 bytes and is rejected if merge-conflict markers leave it empty.
+In a repository's `.no-mistakes.yaml` it is read only from the trusted default branch; see [repo config](/no-mistakes/reference/repo-config/#title).
+A `custom` style that resolves with no prompt rule generates one from the validated `pattern` instead of failing the run.
+
+A per-repo [`title`](/no-mistakes/reference/repo-config/#title) block overrides this global setting.
+
 ### intent
 
 Transcript-based user-intent extraction settings.
@@ -439,6 +494,7 @@ By default, evidence artifacts are written to `<NM_HOME>/evidence/<run-id>` and 
 | `test.evidence.store_in_repo` | `bool`   | `false`                  | Publish test evidence artifacts to the repository's orphan evidence branch |
 | `test.evidence.dir`           | `string` | `.no-mistakes/evidence`  | Directory prefix inside the evidence branch                                |
 | `test.evidence.branch`        | `string` | `no-mistakes/evidence`   | Name of the orphan evidence branch                                         |
+| `test.evidence.pr_detail`     | `string` | `full`                   | How much per-artifact detail the pull-request body renders                  |
 | `test.evidence.local_root`    | `string` | `<NM_HOME>/evidence`     | Absolute directory where run evidence is written on local disk             |
 | `test.evidence.retention`     | `string` | `336h` (14 days)         | How long a run's evidence survives; `unlimited`/`none`/`off`/`never` or a non-positive duration disables the bound |
 | `test.evidence.max_runs`      | `int`    | `200`                    | How many run directories survive regardless of age; `0` disables the bound |
@@ -452,6 +508,22 @@ The publisher never force-pushes. It appends to the fetched evidence-branch tip 
 Publication is also refused when the remote cannot be read or pushed, an artifact exceeds 64 MiB, a run exceeds 500 files or 256 MiB, or another writer wins the retry. The PR body then keeps its local rendering instead of adding links that would not resolve.
 Evidence-branch publication currently supports GitHub links only. On other providers, no evidence branch is pushed and the PR body keeps its local rendering.
 Enabling this pushes a branch to your remote, so pick a `branch` name your CI workflows do not build.
+
+#### Pull-request detail
+
+`pr_detail` bounds what the pull request's `## Testing` section renders. It never changes what the test step collects.
+
+| Value | Testing section |
+| --- | --- |
+| `full` | Every artifact, as links, local-path references, and `<details>` blocks with embedded log text |
+| `summary` | The prose testing summary plus one line stating how many artifacts were recorded and naming the run's local evidence directory |
+| `none` | The prose testing summary only |
+
+`full` is the default, so this setting changes nothing for anyone who does not ask for it.
+Under `summary` and `none` the artifacts still land in `<NM_HOME>/evidence/<run-id>` in full; the local directory named by the `summary` line is how the operator reaches them, because nothing else in no-mistakes displays artifact detail.
+If you rely on that pointer, raise `retention` to cover how long your pull requests stay open - once a run's evidence is reaped, the line names a directory that no longer exists.
+Any value but `full` also skips evidence-branch publication: nothing in the body would link the published branch, so pushing one would leave an unreachable branch on the remote.
+A value outside the three fails the config with the offending key and value.
 
 #### Local storage and cleanup
 

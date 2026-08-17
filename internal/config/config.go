@@ -530,6 +530,12 @@ type TestRaw struct {
 type EvidenceRaw struct {
 	StoreInRepo *bool   `yaml:"store_in_repo"`
 	Dir         *string `yaml:"dir"`
+	// PRDetail bounds how much per-artifact detail the PR body's Testing section
+	// renders. It is repository-relevant rather than machine-relevant - it is the
+	// repository's reviewers who read the body - so a repo config may set it,
+	// unlike the local-storage fields below. Collection is unaffected either way:
+	// artifacts are still gathered to the local evidence directory in full.
+	PRDetail *string `yaml:"pr_detail"`
 	// Branch selects the orphan evidence branch. It names a git ref the
 	// daemon pushes to with the maintainer's credentials, so it is honored
 	// ONLY from the trusted default-branch copy of .no-mistakes.yaml (see
@@ -566,6 +572,9 @@ type Evidence struct {
 	StoreInRepo bool
 	Dir         string
 	Branch      string
+	// PRDetail is one of EvidencePRDetailFull, EvidencePRDetailSummary, or
+	// EvidencePRDetailNone. It governs rendering only, never collection.
+	PRDetail string
 	// LocalRoot overrides the app-root default for on-disk evidence; empty
 	// means paths.EvidenceDir(). Retention and MaxRuns bound how much of it
 	// survives: no-mistakes reaps its own evidence rather than leaving that to
@@ -574,6 +583,23 @@ type Evidence struct {
 	Retention time.Duration
 	MaxRuns   int
 }
+
+// Values for test.evidence.pr_detail. They bound the PR body's Testing section
+// without touching what the test step collects:
+//
+//   - full    every artifact rendered as upstream does: links, local paths, and
+//     <details> blocks with embedded log text.
+//   - summary the prose testing summary plus one line stating how many artifacts
+//     were recorded and where to find them locally.
+//   - none    the prose testing summary only.
+//
+// full is the default so this setting changes nothing for anyone who does not ask
+// for it.
+const (
+	EvidencePRDetailFull    = "full"
+	EvidencePRDetailSummary = "summary"
+	EvidencePRDetailNone    = "none"
+)
 
 // EvalRaw is the YAML representation of local evaluation-corpus settings.
 // Pointer fields distinguish "not set" (nil) from explicit zero/false values.
@@ -841,6 +867,13 @@ intent:
 # history with your code branches, so artifacts never enter the pushed branch or
 # the default branch.
 #
+# pr_detail bounds how much artifact detail reaches the PR body, without changing
+# what is collected locally. "full" (default) renders every artifact as links,
+# local paths, and <details> blocks with embedded log text. "summary" renders the
+# prose testing summary plus one line stating how many artifacts were recorded and
+# where they are on this machine. "none" renders the prose summary only. Repo
+# config may override this value.
+#
 # no-mistakes reaps its own evidence rather than leaving that to an OS temp
 # directory timer: retention ages run directories out (default 14 days) and
 # max_runs caps how many survive regardless of age (default 200). Set retention
@@ -851,6 +884,7 @@ intent:
 # test:
 #   evidence:
 #     store_in_repo: true
+#     pr_detail: full
 #     dir: .no-mistakes/evidence
 #     branch: no-mistakes/evidence
 #     local_root: /var/lib/no-mistakes/evidence
@@ -1982,6 +2016,7 @@ func testDefaults() Test {
 			StoreInRepo: false,
 			Dir:         ".no-mistakes/evidence",
 			Branch:      evidence.DefaultBranch,
+			PRDetail:    EvidencePRDetailFull,
 			LocalRoot:   "",
 			Retention:   DefaultEvidenceRetention,
 			MaxRuns:     DefaultEvidenceMaxRuns,
@@ -2007,6 +2042,9 @@ func applyTestOverrides(dst *Test, src *TestRaw) {
 		if branch, err := evidence.NormalizeBranch(*src.Evidence.Branch); err == nil {
 			dst.Evidence.Branch = branch
 		}
+	}
+	if src.Evidence.PRDetail != nil && strings.TrimSpace(*src.Evidence.PRDetail) != "" {
+		dst.Evidence.PRDetail = strings.TrimSpace(*src.Evidence.PRDetail)
 	}
 }
 
@@ -2237,7 +2275,22 @@ func validateTestRaw(test TestRaw) error {
 	if test.Evidence.MaxRuns != nil && *test.Evidence.MaxRuns < 0 {
 		return fmt.Errorf("test.evidence.max_runs must be 0 (keep every run) or greater, got %d", *test.Evidence.MaxRuns)
 	}
+	if test.Evidence.PRDetail != nil {
+		detail := strings.TrimSpace(*test.Evidence.PRDetail)
+		if detail != "" && !knownEvidencePRDetail(detail) {
+			return fmt.Errorf("test.evidence.pr_detail must be one of %s, got %q",
+				strings.Join([]string{EvidencePRDetailFull, EvidencePRDetailSummary, EvidencePRDetailNone}, ", "), detail)
+		}
+	}
 	return nil
+}
+
+func knownEvidencePRDetail(detail string) bool {
+	switch detail {
+	case EvidencePRDetailFull, EvidencePRDetailSummary, EvidencePRDetailNone:
+		return true
+	}
+	return false
 }
 
 // autoFixDefaults returns the default auto-fix configuration.

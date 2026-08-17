@@ -8,12 +8,16 @@ Per-repo configuration lives in `.no-mistakes.yaml` at the root of your reposito
 :::caution[Security: gate-control fields are read from the default branch]
 `commands.*` execute arbitrary shell on the daemon host via `sh -c` / `cmd.exe /c`, and `agent` selects which process launches there (including ordered fallback lists, ACP aliases such as `cursor`, and `acp:` targets) with the maintainer's credentials.
 To prevent a supply-chain attack where a contributor lands a hostile value on a gated branch, the daemon always reads **`commands` and `agent` from your default branch** (e.g. `origin/main`), never from the pushed SHA, and reads them at the exact commit a fresh fetch resolved (so a stale `origin/<default>` ref cannot serve a value the live default branch removed).
+<<<<<<< HEAD
 The daemon also reads `document.instructions`, `review.path_instructions`, `disable_project_settings`, `no_ci`, `ci.rerun_transient`, and `test.evidence.branch` only from that trusted copy.
 `pr.base_branch` is trusted-default-branch-only as well, but unlike those fields it follows the same `allow_repo_commands: true` opt-in exception as `commands`/`agent` (see [`pr.base_branch`](#prbase_branch) below).
+=======
+The daemon also reads `document.instructions`, `review.path_instructions`, `title.prompt_rule`, `disable_project_settings`, `no_ci`, `ci.rerun_transient`, and `test.evidence.branch` only from that trusted copy.
+>>>>>>> 7498fbf (feat(pipeline,config): bound artifact detail in pull-request bodies)
 If the default branch cannot be fetched and resolved to a readable commit, or its present `.no-mistakes.yaml` cannot be read and parsed, the run aborts before launching an agent.
 A readable default-branch tree with no `.no-mistakes.yaml` is valid and uses defaults.
 Commit the gate-control settings you want to your default branch.
-Non-executing fields (`ignore_patterns`, `auto_fix`, `commit`, `intent`, `test`) are still read from the pushed branch, except `test.evidence.branch`, which names a git ref the daemon pushes to.
+Non-executing fields (`ignore_patterns`, `auto_fix`, `commit`, `title`, `intent`, `test`) are still read from the pushed branch, except `test.evidence.branch`, which names a git ref the daemon pushes to, and `title.prompt_rule`, which is injected into a gate agent's prompt.
 
 If you genuinely want per-branch `commands` and `agent` (for example, a single-developer repo where you trust your own feature branches), opt in with [`allow_repo_commands: true`](#allow_repo_commands) in this same file on your default branch. This re-enables the previous behavior with eyes open. The switch is read only from the trusted default-branch copy, so a contributor cannot self-enable it from a pushed branch.
 :::
@@ -422,6 +426,38 @@ The setting applies to the Review, Test, Document, and Lint fix path, not commit
 
 This non-executing field is read from the pushed branch, so a branch can adopt its own commit convention without enabling `allow_repo_commands`.
 
+### title
+
+Override the pull-request title format for this repository.
+The setting also drives the commit-subject suggestion in `no-mistakes wizard`.
+
+| Field | Type | Default |
+| --- | --- | --- |
+| `title.style` | `string` | Inherits from global (default `exfresso`) |
+| `title.pattern` | `string` | Inherits from global; honoured only when `style: custom` |
+| `title.branch_token` | `string` | Inherits from global; honoured only when `style: custom` |
+| `title.template` | `string` | Inherits from global; required when `branch_token` is set |
+| `title.prompt_rule` | `string` | Inherits from global; **trusted default branch only** |
+
+`style` is one of `exfresso`, `conventional`, `free`, or `custom`.
+Set `style: conventional` to get upstream no-mistakes behaviour, which is Conventional Commits with an inferred type prefix.
+See [global `title`](/no-mistakes/reference/global-config/#title) for what each style does, the validation limits, and the normalization rules.
+
+`style`, `pattern`, `branch_token`, and `template` are non-executing fields read from the pushed branch, so a branch can adopt its own title convention without enabling `allow_repo_commands` - the same treatment [`commit.fix_message`](#commitfix_message) gets.
+They are fully validated when the file is parsed, on the pushed copy as well as the trusted one, so a branch carrying an invalid block fails before it merges rather than breaking the pipeline afterwards.
+
+`title.prompt_rule` is the exception and is read ONLY from the trusted default-branch copy of this file, exactly like [`document.instructions`](#documentinstructions) and [`review.path_instructions`](#reviewpath_instructions) and regardless of `allow_repo_commands`.
+It injects free text into the prompt of the gate agent that drafts the pull request, so a contributor must not be able to write instructions into the agent that describes their own change.
+A `custom` style that resolves with no trusted `prompt_rule` does not fail the run: it falls back to a rule generated from the validated `pattern`, which is a weaker instruction than a hand-written one but carries no injection surface.
+
+```yaml
+title:
+  style: custom
+  pattern: '^\[[A-Z]+-\d+\] .+$'
+  branch_token: '(?i)([a-z]+-\d+)'
+  template: '[{{.Token}}] {{.Description}}'
+```
+
 ### intent
 
 Override transcript-based user-intent extraction settings for this repo.
@@ -446,8 +482,12 @@ Fields not set here inherit from global config and then the built-in defaults.
 | `test.evidence.store_in_repo` | `bool` | Inherits from global (default `false`) |
 | `test.evidence.dir` | `string` | Inherits from global (default `.no-mistakes/evidence`) |
 | `test.evidence.branch` | `string` | Inherits from global (default `no-mistakes/evidence`) |
+| `test.evidence.pr_detail` | `string` | Inherits from global (default `full`) |
 
 By default, test evidence is written to `<NM_HOME>/evidence/<run-id>` and referenced by local path. Where it is stored locally and how long it is kept are global-only settings; see [`test.evidence`](/no-mistakes/reference/global-config/#testevidence).
 For GitHub repositories, set `store_in_repo: true` to publish it to an orphan evidence branch in the code branch's push-target repository and link the artifacts from the PR body; evidence is never committed to the pushed branch, so it never reaches the default branch.
 `test.evidence.branch` is read ONLY from the trusted default-branch copy of this file, because it names a git ref the daemon pushes to; a pushed branch cannot redirect evidence commits.
+`test.evidence.pr_detail` bounds how much artifact detail the PR body's Testing section renders: `full` (the default) renders every artifact, `summary` renders the prose testing summary plus one line stating how many artifacts were recorded and where they are on the operator's machine, and `none` renders the prose summary only.
+It changes rendering only - artifacts are still collected to `<NM_HOME>/evidence/<run-id>` in full either way - and it is repository-relevant because it is the repository's reviewers who read the body, so a pushed branch may set it.
+Setting it to anything but `full` also skips evidence publication, because nothing in the PR body would link the published branch.
 See [global config](/no-mistakes/reference/global-config/#testevidence) for provider support, limits, validation, and fail-closed behavior.

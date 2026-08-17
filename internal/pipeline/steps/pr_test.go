@@ -2245,7 +2245,7 @@ func TestPRStep_TitlePromptCarriesConfiguredFormatRule(t *testing.T) {
 			sctx.Config.Title = mustTitleFormat(t, tc.style)
 
 			step := &PRStep{}
-			if _, err := step.buildPRContent(sctx, "sc-1-a-change", baseSHA, 0); err != nil {
+			if _, err := step.buildPRContent(sctx, "sc-1-a-change", "main", baseSHA, scm.ProviderGitHub, 0); err != nil {
 				t.Fatal(err)
 			}
 			prompt := ag.calls[0].Prompt

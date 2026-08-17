@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/kunchenguid/no-mistakes/internal/config"
 	"github.com/kunchenguid/no-mistakes/internal/evidence"
 	"github.com/kunchenguid/no-mistakes/internal/pipeline"
 )
@@ -34,6 +35,15 @@ type evidenceLinks struct {
 // paths rather than as links that would not resolve.
 func publishRunEvidence(sctx *pipeline.StepContext) *evidenceLinks {
 	if sctx == nil || sctx.Config == nil || sctx.Repo == nil || sctx.Run == nil || !sctx.Config.Test.Evidence.StoreInRepo {
+		return nil
+	}
+	// Nothing in the PR body links the evidence branch unless artifacts render in
+	// full, so publishing one would push a branch to the remote that nobody can
+	// reach from the pull request. The combination is reachable (store_in_repo is
+	// independent of pr_detail), so refuse it explicitly rather than pushing
+	// silently.
+	if detail := sctx.Config.Test.Evidence.PRDetail; detail != "" && detail != config.EvidencePRDetailFull {
+		sctx.Log(fmt.Sprintf("test evidence not published: test.evidence.pr_detail is %q, so the pull request would not link it", detail))
 		return nil
 	}
 	sourceDir := testEvidenceDir(sctx)

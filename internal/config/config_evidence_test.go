@@ -213,3 +213,48 @@ func TestEffectiveRepoConfig_EvidenceBranchTrustedOnly(t *testing.T) {
 		t.Errorf("without a trusted copy the branch must fall back to the default, got %q", *withoutTrusted.Test.Evidence.Branch)
 	}
 }
+
+func TestTestEvidencePRDetailDefaultsToFull(t *testing.T) {
+	if got := testDefaults().Evidence.PRDetail; got != EvidencePRDetailFull {
+		t.Errorf("default PRDetail = %q, want %q", got, EvidencePRDetailFull)
+	}
+	if got := Merge(DefaultGlobalConfig(), &RepoConfig{}).Test.Evidence.PRDetail; got != EvidencePRDetailFull {
+		t.Errorf("merged PRDetail = %q, want %q", got, EvidencePRDetailFull)
+	}
+}
+
+func TestTestEvidencePRDetailRepoOverridesGlobal(t *testing.T) {
+	globalDetail := "none"
+	repoDetail := "summary"
+	global := &GlobalConfig{Test: TestRaw{Evidence: EvidenceRaw{PRDetail: &globalDetail}}}
+	repo := &RepoConfig{Test: TestRaw{Evidence: EvidenceRaw{PRDetail: &repoDetail}}}
+
+	if got := Merge(global, repo).Test.Evidence.PRDetail; got != EvidencePRDetailSummary {
+		t.Errorf("PRDetail = %q, want the repo value %q", got, EvidencePRDetailSummary)
+	}
+	if got := Merge(global, &RepoConfig{}).Test.Evidence.PRDetail; got != EvidencePRDetailNone {
+		t.Errorf("PRDetail = %q, want the global value %q", got, EvidencePRDetailNone)
+	}
+}
+
+func TestTestEvidencePRDetailFromRepoYAML(t *testing.T) {
+	repo, err := LoadRepoFromBytes([]byte("test:\n  evidence:\n    pr_detail: summary\n"))
+	if err != nil {
+		t.Fatalf("LoadRepoFromBytes failed: %v", err)
+	}
+	if got := Merge(DefaultGlobalConfig(), repo).Test.Evidence.PRDetail; got != EvidencePRDetailSummary {
+		t.Errorf("PRDetail = %q, want %q", got, EvidencePRDetailSummary)
+	}
+}
+
+func TestTestEvidencePRDetailRejectsUnknownValue(t *testing.T) {
+	_, err := LoadRepoFromBytes([]byte("test:\n  evidence:\n    pr_detail: verbose\n"))
+	if err == nil {
+		t.Fatal("expected an error for an unknown test.evidence.pr_detail")
+	}
+	for _, want := range []string{"test.evidence.pr_detail", "verbose"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not name %q", err, want)
+		}
+	}
+}

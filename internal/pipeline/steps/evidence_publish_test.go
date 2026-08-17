@@ -107,7 +107,7 @@ func TestPublishRunEvidence_LandsOnOrphanBranchAndLinksFromThePRBody(t *testing.
 		filepath.Join(evidenceDir, "checkout.png"),
 		filepath.Join(evidenceDir, "cli-run.txt"),
 	))
-	md := BuildTestingSummaryForPR(steps, rounds, sctx.Repo.UpstreamURL, sctx.Run.HeadSHA, sctx.WorkDir, testEvidenceDir(sctx), links)
+	md := BuildTestingSummaryForPR(steps, rounds, sctx.Repo.UpstreamURL, sctx.Run.HeadSHA, sctx.WorkDir, testEvidenceDir(sctx), links, config.EvidencePRDetailFull)
 	t.Logf("rendered PR testing markdown:\n%s", md)
 
 	wantLink := "https://github.com/example/widgets/blob/" + tip + "/.no-mistakes/evidence/feature/add-login/checkout.png"
@@ -149,7 +149,7 @@ func TestPublishRunEvidence_PercentEncodesEveryArtifactPathSegment(t *testing.T)
 		`{"kind":"screenshot","label":"Encoded screenshot","path":%q}`,
 		filepath.Join(evidenceDir, filepath.FromSlash(artifact)),
 	))
-	md := BuildTestingSummaryForPR(steps, rounds, sctx.Repo.UpstreamURL, sctx.Run.HeadSHA, sctx.WorkDir, testEvidenceDir(sctx), links)
+	md := BuildTestingSummaryForPR(steps, rounds, sctx.Repo.UpstreamURL, sctx.Run.HeadSHA, sctx.WorkDir, testEvidenceDir(sctx), links, config.EvidencePRDetailFull)
 	want := "https://github.com/example/widgets/blob/" + tip + "/evidence%20archive%20%231%20100%25/feature/add-login/capture%20%231%20100%25/checkout%20100%25.png"
 	if !strings.Contains(md, want) {
 		t.Fatalf("expected every artifact path segment to be encoded as %q, got:\n%s", want, md)
@@ -191,7 +191,7 @@ func TestPublishRunEvidence_InvalidBranchNameFallsBackToLocalPaths(t *testing.T)
 		`{"kind":"screenshot","label":"Checkout screenshot","path":%q}`,
 		filepath.Join(evidenceDir, "checkout.png"),
 	))
-	md := BuildTestingSummaryForPR(steps, rounds, sctx.Repo.UpstreamURL, sctx.Run.HeadSHA, sctx.WorkDir, testEvidenceDir(sctx), nil)
+	md := BuildTestingSummaryForPR(steps, rounds, sctx.Repo.UpstreamURL, sctx.Run.HeadSHA, sctx.WorkDir, testEvidenceDir(sctx), nil, config.EvidencePRDetailFull)
 	if !strings.Contains(md, "local file:") {
 		t.Fatalf("expected unpublished evidence to render as a local path, got:\n%s", md)
 	}
@@ -220,5 +220,34 @@ func TestPublishRunEvidence_DisabledDoesNotTouchTheRemote(t *testing.T) {
 	}
 	if refs := gitCmd(t, remote, "for-each-ref", "--format=%(refname)"); refs != "refs/heads/main" {
 		t.Errorf("remote refs changed: %q", refs)
+	}
+}
+
+// Publishing an orphan evidence branch is pointless when the PR body carries no
+// link into it, so the two settings are not allowed to disagree silently.
+func TestPublishRunEvidence_SkippedWhenPRDetailSuppressesLinks(t *testing.T) {
+	for _, detail := range []string{config.EvidencePRDetailSummary, config.EvidencePRDetailNone} {
+		t.Run(detail, func(t *testing.T) {
+			sctx, remote := newEvidencePublishContext(t, "feature/add-login")
+			sctx.Config.Test.Evidence.PRDetail = detail
+			writeRunEvidence(t, sctx, map[string]string{"cli-run.txt": "it works\n"})
+
+			if links := publishRunEvidence(sctx); links != nil {
+				t.Errorf("expected no publication under pr_detail %q, got %+v", detail, links)
+			}
+			if out := gitCmd(t, remote, "for-each-ref", "--format=%(refname)", "refs/heads/"); strings.Contains(out, "no-mistakes/evidence") {
+				t.Errorf("evidence branch was pushed under pr_detail %q: %s", detail, out)
+			}
+		})
+	}
+}
+
+func TestPublishRunEvidence_StillPublishesUnderFullPRDetail(t *testing.T) {
+	sctx, _ := newEvidencePublishContext(t, "feature/add-login")
+	sctx.Config.Test.Evidence.PRDetail = config.EvidencePRDetailFull
+	writeRunEvidence(t, sctx, map[string]string{"cli-run.txt": "it works\n"})
+
+	if links := publishRunEvidence(sctx); links == nil {
+		t.Error("expected evidence to be published under pr_detail full")
 	}
 }

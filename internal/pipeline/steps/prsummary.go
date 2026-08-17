@@ -14,6 +14,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/kunchenguid/no-mistakes/internal/config"
 	"github.com/kunchenguid/no-mistakes/internal/db"
 	"github.com/kunchenguid/no-mistakes/internal/scm"
 	"github.com/kunchenguid/no-mistakes/internal/types"
@@ -73,6 +74,12 @@ type testingSummaryOptions struct {
 	// branch. It is nil when nothing was published, and the artifacts then
 	// render as local paths rather than as links that would not resolve.
 	evidence *evidenceLinks
+	// artifactDetail bounds how much per-artifact detail is rendered. It is one
+	// of the config.EvidencePRDetail* values; empty behaves as full, so a caller
+	// that does not set it keeps the original rendering. Collection is never
+	// affected: artifacts are always gathered, so the count stays available even
+	// when no detail is rendered.
+	artifactDetail string
 }
 
 // BuildPipelineSummary produces a deterministic markdown section from step results and rounds.
@@ -161,11 +168,11 @@ func BuildTestingSummary(steps []*db.StepResult, rounds map[string][]*db.StepRou
 	return buildTestingSummary(steps, rounds, testingSummaryOptions{includeTestedDetails: true})
 }
 
-func BuildTestingSummaryForPR(steps []*db.StepResult, rounds map[string][]*db.StepRound, upstreamURL, ref, repoRoot, evidenceRoot string, links *evidenceLinks) string {
-	return BuildTestingSummaryForPRWithProvider(steps, rounds, upstreamURL, ref, repoRoot, evidenceRoot, links, scm.ProviderUnknown)
+func BuildTestingSummaryForPR(steps []*db.StepResult, rounds map[string][]*db.StepRound, upstreamURL, ref, repoRoot, evidenceRoot string, links *evidenceLinks, artifactDetail string) string {
+	return BuildTestingSummaryForPRWithProvider(steps, rounds, upstreamURL, ref, repoRoot, evidenceRoot, links, scm.ProviderUnknown, artifactDetail)
 }
 
-func BuildTestingSummaryForPRWithProvider(steps []*db.StepResult, rounds map[string][]*db.StepRound, upstreamURL, ref, repoRoot, evidenceRoot string, links *evidenceLinks, provider scm.Provider) string {
+func BuildTestingSummaryForPRWithProvider(steps []*db.StepResult, rounds map[string][]*db.StepRound, upstreamURL, ref, repoRoot, evidenceRoot string, links *evidenceLinks, provider scm.Provider, artifactDetail string) string {
 	opts := testingSummaryOptionsForGitHub(upstreamURL, ref)
 	opts.flavor = prBodyFlavorFor(provider)
 	opts.compactArtifacts = true
@@ -174,6 +181,7 @@ func BuildTestingSummaryForPRWithProvider(steps []*db.StepResult, rounds map[str
 	opts.repoRoot = repoRoot
 	opts.evidenceRoot = evidenceRoot
 	opts.evidence = links
+	opts.artifactDetail = artifactDetail
 	return buildTestingSummary(steps, rounds, opts)
 }
 
@@ -220,15 +228,26 @@ func buildTestingSummary(steps []*db.StepResult, rounds map[string][]*db.StepRou
 				b.WriteString("\n")
 			}
 		}
-		renderState := testingArtifactRenderState{remainingEmbeddedBytes: maxEmbeddedArtifactsTotalBytes}
-		for _, artifact := range artifacts {
-			rendered := renderTestingArtifact(artifact, opts, &renderState)
-			if rendered == "" {
-				continue
+		// Branch on the detail setting once, here, rather than inside the artifact
+		// renderers: those internals change often upstream, and an early branch
+		// keeps this fork's diff away from them.
+		switch artifactDetailMode(opts) {
+		case config.EvidencePRDetailNone:
+		case config.EvidencePRDetailSummary:
+			if line := renderArtifactCountLine(len(artifacts), opts); line != "" {
+				b.WriteString(line)
 			}
-			b.WriteString(rendered)
-			if !strings.HasSuffix(rendered, "\n") {
-				b.WriteString("\n")
+		default:
+			renderState := testingArtifactRenderState{remainingEmbeddedBytes: maxEmbeddedArtifactsTotalBytes}
+			for _, artifact := range artifacts {
+				rendered := renderTestingArtifact(artifact, opts, &renderState)
+				if rendered == "" {
+					continue
+				}
+				b.WriteString(rendered)
+				if !strings.HasSuffix(rendered, "\n") {
+					b.WriteString("\n")
+				}
 			}
 		}
 		if outcome := buildTestingOutcomeLine(line, stepRounds); shouldRenderTestingOutcome(opts, wroteSummary, outcome) {
@@ -241,6 +260,41 @@ func buildTestingSummary(steps []*db.StepResult, rounds map[string][]*db.StepRou
 	}
 
 	return ""
+}
+
+// artifactDetailMode resolves the configured detail level. An empty value means
+// full, so a caller that never sets it renders exactly as it always did.
+func artifactDetailMode(opts testingSummaryOptions) string {
+	if opts.artifactDetail == "" {
+		return config.EvidencePRDetailFull
+	}
+	return opts.artifactDetail
+}
+
+// renderArtifactCountLine states how many artifacts a run recorded, and where the
+// operator can find them, without naming a single one. It is deliberately the
+// only evidence line in summary mode: the PR body is the reviewers' view, and the
+// artifacts themselves stay on the operator's disk.
+func renderArtifactCountLine(count int, opts testingSummaryOptions) string {
+	if count == 0 {
+		return ""
+	}
+	noun := "artifact(s)"
+	switch count {
+	case 1:
+		noun = "artifact"
+	default:
+		noun = "artifacts"
+	}
+	line := fmt.Sprintf("- Evidence: %d %s recorded locally", count, noun)
+	// The local directory is the operator's only rendered route back to the
+	// artifacts: nothing else in no-mistakes displays them. Name the directory
+	// only - a per-artifact manifest here would be the verbosity this mode exists
+	// to remove.
+	if dir := strings.TrimSpace(opts.evidenceRoot); dir != "" {
+		line += " in " + dir
+	}
+	return line + ".\n"
 }
 
 func shouldRenderTestingOutcome(opts testingSummaryOptions, wroteSummary bool, outcome string) bool {
