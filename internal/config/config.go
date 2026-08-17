@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/kunchenguid/no-mistakes/internal/evidence"
+	"github.com/kunchenguid/no-mistakes/internal/title"
 	"github.com/kunchenguid/no-mistakes/internal/types"
 	"github.com/kunchenguid/no-mistakes/internal/winproc"
 	"github.com/kunchenguid/no-mistakes/internal/worktrees"
@@ -116,6 +117,7 @@ type GlobalConfig struct {
 	// else's project), and a trusted repo value still wins over it.
 	CI     CIRaw
 	Commit CommitRaw
+	Title  TitleRaw
 	Intent IntentRaw
 	Test   TestRaw
 	// Eval is resolved at load time because it is global-only: it describes
@@ -142,6 +144,7 @@ type globalConfigRaw struct {
 	AutoFix              AutoFixRaw          `yaml:"auto_fix"`
 	CI                   CIRaw               `yaml:"ci"`
 	Commit               CommitRaw           `yaml:"commit"`
+	Title                TitleRaw            `yaml:"title"`
 	Intent               IntentRaw           `yaml:"intent"`
 	Test                 TestRaw             `yaml:"test"`
 	Eval                 EvalRaw             `yaml:"eval"`
@@ -166,9 +169,16 @@ type RepoConfig struct {
 	AutoFix AutoFixRaw `yaml:"auto_fix"`
 	CI      CIRaw      `yaml:"ci"`
 	Commit  CommitRaw  `yaml:"commit"`
-	Intent  IntentRaw  `yaml:"intent"`
-	Test    TestRaw    `yaml:"test"`
-	PR      PRRaw      `yaml:"pr"`
+	// Title carries the repository's PR-title format. Its style, pattern,
+	// branch_token, and template are pushed-readable, matching
+	// commit.fix_message: they are non-executing data, fully validated at parse
+	// time, and a branch genuinely may adopt its own title convention. Its
+	// prompt_rule is the exception and is honored ONLY from the trusted
+	// default-branch copy (see EffectiveRepoConfig).
+	Title  TitleRaw  `yaml:"title"`
+	Intent IntentRaw `yaml:"intent"`
+	Test   TestRaw   `yaml:"test"`
+	PR     PRRaw     `yaml:"pr"`
 	// Document carries the repository's documentation placement policy. It
 	// steers the document step's gate prompt, so it is honored ONLY from the
 	// trusted default-branch copy of .no-mistakes.yaml (see
@@ -212,6 +222,29 @@ type DocumentRaw struct {
 	// placement policy with the repository's ownership map or extra
 	// placement rules.
 	Instructions string `yaml:"instructions"`
+}
+
+// TitleRaw is the YAML representation of PR-title format settings.
+// Pointer fields distinguish "not set" (nil) from an explicit empty value.
+//
+// Style selects a built-in convention or "custom". Pattern, BranchToken, and
+// Template are honored only when Style is "custom"; the built-in styles carry
+// their own (see internal/title). All four are pushed-readable for the same
+// reason commit.fix_message is: they are non-executing data, fully validated at
+// parse time (validateTitleRaw), and adopting a title convention is exactly the
+// kind of decision a branch may legitimately make about itself.
+//
+// PromptRule is NOT. It injects free text into the prompt of the gate agent that
+// drafts the pull request, so it is honored ONLY from the trusted default-branch
+// copy of .no-mistakes.yaml (see EffectiveRepoConfig), exactly like
+// document.instructions and review.path_instructions: a contributor must not be
+// able to write instructions into the agent that describes their own change.
+type TitleRaw struct {
+	Style       *string `yaml:"style"`
+	Pattern     *string `yaml:"pattern"`
+	BranchToken *string `yaml:"branch_token"`
+	Template    *string `yaml:"template"`
+	PromptRule  *string `yaml:"prompt_rule"`
 }
 
 // ReviewRaw is the YAML representation of review-step settings.
@@ -349,6 +382,7 @@ func (c *RepoConfig) UnmarshalYAML(value *yaml.Node) error {
 		AutoFix                AutoFixRaw  `yaml:"auto_fix"`
 		CI                     CIRaw       `yaml:"ci"`
 		Commit                 CommitRaw   `yaml:"commit"`
+		Title                  TitleRaw    `yaml:"title"`
 		Intent                 IntentRaw   `yaml:"intent"`
 		Test                   TestRaw     `yaml:"test"`
 		PR                     PRRaw       `yaml:"pr"`
@@ -369,6 +403,7 @@ func (c *RepoConfig) UnmarshalYAML(value *yaml.Node) error {
 	c.AutoFix = raw.AutoFix
 	c.CI = raw.CI
 	c.Commit = raw.Commit
+	c.Title = raw.Title
 	c.Intent = raw.Intent
 	c.Test = raw.Test
 	c.PR = raw.PR
@@ -447,11 +482,14 @@ type Config struct {
 	AutoFix               AutoFix
 	CI                    CI
 	Commit                Commit
-	Intent                Intent
-	Test                  Test
-	Document              Document
-	Review                Review
-	PR                    PR
+	// Title is the resolved PR-title format. It is resolved once here, at merge
+	// time, so no pipeline step re-parses regexes or templates per call.
+	Title    title.Format
+	Intent   Intent
+	Test     Test
+	Document Document
+	Review   Review
+	PR       PR
 	// DisableProjectSettings is the resolved, trusted-only opt-out (see the
 	// RepoConfig field). When true, gate agents are launched with their
 	// project-level settings/instructions suppressed; the daemon fails the run
@@ -763,6 +801,26 @@ ci:
 # Repo config may override this value.
 # commit:
 #   fix_message: "no-mistakes({{.Step}}): {{.Summary}}"
+
+# Pull-request title format. Also drives the wizard's commit-subject suggestion.
+# Styles:
+#   exfresso     (default) "[sc-<number>] <description>", where the story number
+#                is read from the branch name (sc-1234-dim-weight-rounding).
+#   conventional Conventional Commits: "type(scope): description". This is
+#                upstream no-mistakes behaviour.
+#   free         No validation and no rewriting; the agent's title is used as-is.
+#   custom       Your own pattern, below.
+# A title that already matches the format is never rewritten, and a story number
+# is never invented: a branch with no token yields an unprefixed title.
+# Repo config may override the style, pattern, branch_token, and template; a
+# repository's prompt_rule is honoured only from its trusted default branch.
+# title:
+#   style: exfresso
+#   # Honoured only when style: custom.
+#   pattern: '^\[[A-Z]+-\d+\] .+$'      # a compliant title must match this
+#   branch_token: '(?i)([a-z]+-\d+)'    # one capture group, read from the branch
+#   template: '[{{.Token}}] {{.Description}}'  # required with branch_token
+#   prompt_rule: 'The title must start with a ticket key in brackets.'
 
 # User-intent extraction. When you push a branch, no-mistakes can read recent
 # transcripts from your local agent (Claude Code, Codex, OpenCode, Rovo Dev, Pi,
@@ -1518,6 +1576,9 @@ func LoadGlobalFromBytes(data []byte) (*GlobalConfig, error) {
 	if err := validateTestRaw(raw.Test); err != nil {
 		return nil, fmt.Errorf("parse global config: %w", err)
 	}
+	if err := validateTitleRaw(raw.Title); err != nil {
+		return nil, fmt.Errorf("parse global config: %w", err)
+	}
 	if err := validateEvalRaw(raw.Eval); err != nil {
 		return nil, fmt.Errorf("parse global config: %w", err)
 	}
@@ -1657,6 +1718,9 @@ func parseRepoConfig(data []byte) (*RepoConfig, error) {
 		return nil, fmt.Errorf("parse repo config: %w", err)
 	}
 	if err := validateReviewRaw(cfg.Review); err != nil {
+		return nil, fmt.Errorf("parse repo config: %w", err)
+	}
+	if err := validateTitleRaw(cfg.Title); err != nil {
 		return nil, fmt.Errorf("parse repo config: %w", err)
 	}
 	if err := validateTestRaw(cfg.Test); err != nil {
@@ -1824,6 +1888,14 @@ func EffectiveRepoConfig(pushed, trusted *RepoConfig, allowRepoCommands bool) *R
 		if !allowRepoCommands {
 			effective.PR = trusted.PR
 		}
+		// title.prompt_rule is free text injected into the prompt of the gate
+		// agent that drafts this branch's pull request. It is trusted-only for
+		// exactly the reason document.instructions and review.path_instructions
+		// are, and regardless of allow_repo_commands: a contributor must not be
+		// able to write instructions into the agent that describes their own
+		// change. The rest of the title block stays pushed-readable because it is
+		// validated, non-executing data that only picks a title convention.
+		effective.Title.PromptRule = trusted.Title.PromptRule
 	} else {
 		effective.Document = DocumentRaw{}
 		effective.Review = ReviewRaw{}
@@ -1834,6 +1906,7 @@ func EffectiveRepoConfig(pushed, trusted *RepoConfig, allowRepoCommands bool) *R
 		if !allowRepoCommands {
 			effective.PR = PRRaw{}
 		}
+		effective.Title.PromptRule = nil
 	}
 	if allowRepoCommands {
 		return &effective
@@ -1935,6 +2008,119 @@ func applyTestOverrides(dst *Test, src *TestRaw) {
 			dst.Evidence.Branch = branch
 		}
 	}
+}
+
+// titleSettings is the resolved-but-unbuilt title format: the raw strings Merge
+// hands to title.Resolve. It exists so global and repo overrides compose the
+// same way every other block's do, before anything is compiled.
+type titleSettings struct {
+	Style       string
+	Pattern     string
+	BranchToken string
+	Template    string
+	PromptRule  string
+}
+
+// titleDefaults returns the default PR-title format. The fork defaults to the
+// exfresso style so a fresh clone of a Merlin repository behaves correctly with
+// no .no-mistakes.yaml at all; set title.style: conventional for upstream
+// no-mistakes behavior.
+func titleDefaults() titleSettings {
+	return titleSettings{Style: string(title.StyleExfresso)}
+}
+
+// applyTitleOverrides applies non-nil raw values onto resolved defaults. Values
+// are validated at config parse time (validateTitleRaw), so an unusable value
+// never reaches here.
+func applyTitleOverrides(dst *titleSettings, src *TitleRaw) {
+	if src.Style != nil && strings.TrimSpace(*src.Style) != "" {
+		dst.Style = strings.TrimSpace(*src.Style)
+	}
+	if src.Pattern != nil && strings.TrimSpace(*src.Pattern) != "" {
+		dst.Pattern = strings.TrimSpace(*src.Pattern)
+	}
+	if src.BranchToken != nil && strings.TrimSpace(*src.BranchToken) != "" {
+		dst.BranchToken = strings.TrimSpace(*src.BranchToken)
+	}
+	if src.Template != nil && strings.TrimSpace(*src.Template) != "" {
+		dst.Template = strings.TrimSpace(*src.Template)
+	}
+	if src.PromptRule != nil && strings.TrimSpace(*src.PromptRule) != "" {
+		dst.PromptRule = RenderedInstructions(*src.PromptRule)
+	}
+}
+
+// validateTitleRaw fails the config closed on a title block the pipeline could
+// not honor deterministically: an unknown style, an uncompilable pattern or
+// branch token, a branch token that does not capture exactly one value, or a
+// template the renderer would reject. Rejecting the config surfaces the mistake
+// where it can be fixed instead of silently disabling title validation for the
+// repository.
+//
+// Like validateReviewRaw and validateTestRaw this deliberately also runs on the
+// PUSHED copy, even though EffectiveRepoConfig discards a pushed prompt_rule: a
+// branch carrying an invalid block has to fail before it merges rather than
+// brick the repository's pipeline afterwards.
+func validateTitleRaw(raw TitleRaw) error {
+	if raw.Style != nil {
+		style := strings.TrimSpace(*raw.Style)
+		if !knownTitleStyle(style) {
+			return fmt.Errorf("title.style must be one of %s, got %q", strings.Join(titleStyleNames(), ", "), style)
+		}
+	}
+	if raw.PromptRule != nil {
+		rule := *raw.PromptRule
+		if len(rule) > title.MaxPromptRuleBytes {
+			return fmt.Errorf("title.prompt_rule must not exceed %d bytes, got %d", title.MaxPromptRuleBytes, len(rule))
+		}
+		if strings.TrimSpace(rule) != "" && RenderedInstructions(rule) == "" {
+			return fmt.Errorf("title.prompt_rule is left empty once merge-conflict markers are removed; write the rule without <<<<<<<, =======, or >>>>>>>")
+		}
+	}
+	// The custom-only fields are validated whether or not THIS file also selects
+	// the custom style, so a typo cannot sit unnoticed until a merge makes it
+	// effective. title.ValidateCustomFields deliberately omits the
+	// "pattern is required" rule, which only applies once the resolved style is
+	// known to be custom; Resolve enforces that at merge time.
+	if err := title.ValidateCustomFields(rawTitleString(raw.Pattern), rawTitleString(raw.BranchToken), rawTitleString(raw.Template)); err != nil {
+		return err
+	}
+	if raw.Style != nil && strings.TrimSpace(*raw.Style) == string(title.StyleCustom) {
+		settings := titleDefaults()
+		applyTitleOverrides(&settings, &raw)
+		if _, err := resolveTitleFormat(settings); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func rawTitleString(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return strings.TrimSpace(*value)
+}
+
+func knownTitleStyle(style string) bool {
+	for _, s := range title.Styles {
+		if string(s) == style {
+			return true
+		}
+	}
+	return false
+}
+
+func titleStyleNames() []string {
+	names := make([]string, 0, len(title.Styles))
+	for _, s := range title.Styles {
+		names = append(names, string(s))
+	}
+	return names
+}
+
+func resolveTitleFormat(settings titleSettings) (title.Format, error) {
+	return title.Resolve(settings.Style, settings.Pattern, settings.BranchToken, settings.Template, settings.PromptRule)
 }
 
 // applyEvidenceStorageOverrides applies the global-only local-storage half of
@@ -2157,6 +2343,27 @@ func Merge(global *GlobalConfig, repo *RepoConfig) *Config {
 	// repository's decision (see EvidenceRaw.LocalRoot).
 	applyEvidenceStorageOverrides(&test.Evidence, &global.Test.Evidence)
 
+	titleSet := titleDefaults()
+	applyTitleOverrides(&titleSet, &global.Title)
+	applyTitleOverrides(&titleSet, &repo.Title)
+	// repo is the EffectiveRepoConfig result, so titleSet.PromptRule is already
+	// trusted-only. Merge cannot fail, and the values were validated when each
+	// config file was parsed, so a failure here means the two files combined into
+	// something neither one could express alone (e.g. style: custom in one and no
+	// pattern in either). Falling back to the default preset keeps the run going;
+	// warning keeps it from being silent.
+	titleFormat, err := resolveTitleFormat(titleSet)
+	if err != nil {
+		slog.Warn("failed to resolve title format, falling back to the default style",
+			"style", titleSet.Style, "default", string(title.StyleExfresso), "err", err)
+		titleFormat, err = resolveTitleFormat(titleDefaults())
+		if err != nil {
+			// The default preset is built from compile-time constants, so this is
+			// unreachable short of a programming error in internal/title.
+			slog.Error("default title style failed to resolve", "err", err)
+		}
+	}
+
 	commit := Commit{FixMessage: DefaultFixMessageTemplate}
 	if global.Commit.FixMessage != nil {
 		commit.FixMessage = *global.Commit.FixMessage
@@ -2184,6 +2391,7 @@ func Merge(global *GlobalConfig, repo *RepoConfig) *Config {
 		AutoFix:        af,
 		CI:             ci,
 		Commit:         commit,
+		Title:          titleFormat,
 		Intent:         intent,
 		Test:           test,
 		Document:       Document{Instructions: strings.TrimSpace(repo.Document.Instructions)},
