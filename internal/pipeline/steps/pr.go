@@ -8,7 +8,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/kunchenguid/no-mistakes/internal/agent"
-	"github.com/kunchenguid/no-mistakes/internal/conventional"
 	"github.com/kunchenguid/no-mistakes/internal/db"
 	"github.com/kunchenguid/no-mistakes/internal/git"
 	"github.com/kunchenguid/no-mistakes/internal/pipeline"
@@ -27,7 +26,7 @@ type prContent struct {
 var prContentSchema = json.RawMessage(`{
 	"type": "object",
 	"properties": {
-		"title": {"type": "string", "description": "Conventional commit PR title, e.g. fix(scope): short description"},
+		"title": {"type": "string", "description": "Single-line PR title following the title rules in the prompt"},
 		"body": {"type": "string", "description": "GitHub-flavored markdown body starting with ## What Changed. Plain text, NOT JSON."}
 	},
 	"required": ["title", "body"]
@@ -144,6 +143,15 @@ func (s *PRStep) buildPRContent(sctx *pipeline.StepContext, branch, baseBranch, 
 	}
 	pipelineMD, riskLine, testingMD := s.buildPipelineSection(sctx, provider)
 
+	// The title-format rule comes from configuration (see internal/title), so it
+	// is absent entirely under a style that imposes no format. The trailing
+	// newline belongs to the rule rather than the template so an empty rule
+	// leaves no blank line behind.
+	titleRule := sctx.Config.Title.PromptRule()
+	if titleRule != "" {
+		titleRule += "\n"
+	}
+
 	prompt := fmt.Sprintf(`Draft a pull request title and summary for the full branch delta.
 
 Context:
@@ -154,10 +162,7 @@ Context:
 
 Rules:
 - Cover the full branch delta, not just the latest commit.
-- Title must use conventional commit format: "type(scope): description" or "type: description". Valid types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert. Scope is optional. Do not capitalize the type. Do not use the raw branch name.
-%s
-- When including a scope, it MUST be a real package/module name that exists in the codebase (for example, a directory under internal/, cmd/, or the equivalent top-level grouping for this project), identified by inspecting the changed paths. Pick the primary module affected by the change, not a secondary or incidental one.
-- Keep the scope at a coarse level, not too granular: a codebase typically has fewer than 10 distinct scopes in use across its history. Prefer a broad module name (e.g. "daemon", "pipeline", "cli") over a narrow file or sub-feature name. If you cannot confidently identify a real primary module, omit the scope and use "type: description".
+%s- Do not use the raw branch name as the title.
 - Body: a "## What Changed" section in GitHub-flavored markdown. 1-3 concise bullet points describing the concrete changes in this branch (what code/behavior shifted), not the user's motivation. Do not include Intent, Risk Assessment, Testing, or Pipeline sections - those are prepended/appended separately. The body value must be plain markdown text, never a JSON object or serialized JSON string.
 - Derive every body claim from the final diff. Inspect it directly when the paths and statuses below do not provide enough detail.
 - Do not invent tests or behavior.
@@ -166,7 +171,7 @@ Diff stat:
 %s
 
 Final diff paths and statuses:
-%s%s%s`, branch, baseSHA, sctx.Run.HeadSHA, baseBranch, conventional.ReleaseTypeRule, diffStat, finalDiff, userIntentPromptSection(sctx), executionContextPromptSection())
+%s%s%s`, branch, baseSHA, sctx.Run.HeadSHA, baseBranch, titleRule, diffStat, finalDiff, userIntentPromptSection(sctx), executionContextPromptSection())
 
 	prompt += prBodyBudgetPromptSection(bodyLimit)
 
@@ -190,9 +195,9 @@ Final diff paths and statuses:
 			content.Body = stripGeneratedSections(content.Body)
 			if content.Title != "" && content.Body != "" {
 				originalTitle := content.Title
-				content.Title = conventional.TightenTitle(content.Title)
+				content.Title = sctx.Config.Title.Normalize(content.Title, branch)
 				if content.Title != originalTitle {
-					slog.Warn("tightened agent PR title type", "from", originalTitle, "to", content.Title)
+					slog.Warn("normalized agent PR title", "from", originalTitle, "to", content.Title)
 				}
 				if bodyLimit > 0 {
 					content.Body = assemblePRBody(sctx, content.Body, riskLine, testingMD, pipelineMD, bodyLimit)
@@ -1087,7 +1092,12 @@ func prependIntentSection(body string, sctx *pipeline.StepContext) string {
 }
 
 func fallbackPRContent(sctx *pipeline.StepContext, finalDiff, riskLine, testingMD, pipelineMD string, bodyLimit int) prContent {
-	title := "chore: update pull request"
+	// The fallback subject is deliberately style-neutral prose. Normalize gives it
+	// whatever prefix the configured format calls for, picking up the branch's
+	// token when it has one. It stays lowercase so that under the conventional
+	// style the fallback title remains byte-identical to upstream's
+	// "chore: update pull request".
+	title := sctx.Config.Title.Normalize("update pull request", strings.TrimPrefix(sctx.Run.Branch, "refs/heads/"))
 	diffSummary := strings.TrimSpace(finalDiff)
 	body := "## What Changed\n\nFinal changed paths and statuses:\n\n```text\n" + escapeMarkdownFence(diffSummary) + "\n```"
 	if diffSummary == "" {

@@ -6,6 +6,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/kunchenguid/no-mistakes/internal/title"
 )
 
 type stubAgent struct {
@@ -27,6 +29,23 @@ func (s *stubAgent) Run(_ context.Context, opts RunOpts) (*Result, error) {
 	}
 	return s.result, nil
 }
+
+// conventionalFormat is the title format the pre-existing assertions in this
+// file were written against. Tests that exercise another style resolve their own.
+func conventionalFormat(t *testing.T) title.Format {
+	t.Helper()
+	return resolveFormat(t, title.StyleConventional)
+}
+
+func resolveFormat(t *testing.T, style title.Style) title.Format {
+	t.Helper()
+	f, err := title.Resolve(string(style), "", "", "", "")
+	if err != nil {
+		t.Fatalf("resolve title style %q: %v", style, err)
+	}
+	return f
+}
+
 func (s *stubAgent) Close() error { return nil }
 
 func TestSuggestBranchName(t *testing.T) {
@@ -149,7 +168,7 @@ func TestSuggestCommitMessage(t *testing.T) {
 	ag := &stubAgent{result: &Result{
 		Output: json.RawMessage(`{"subject":"feat(cli): add onboarding wizard"}`),
 	}}
-	got, err := SuggestCommitMessage(context.Background(), ag, "/tmp")
+	got, err := SuggestCommitMessage(context.Background(), ag, "/tmp", conventionalFormat(t))
 	if err != nil {
 		t.Fatalf("SuggestCommitMessage failed: %v", err)
 	}
@@ -162,7 +181,7 @@ func TestSuggestCommitMessageTrimsNewlines(t *testing.T) {
 	ag := &stubAgent{result: &Result{
 		Output: json.RawMessage(`{"subject":"fix: thing\n\nbody"}`),
 	}}
-	got, err := SuggestCommitMessage(context.Background(), ag, "/tmp")
+	got, err := SuggestCommitMessage(context.Background(), ag, "/tmp", conventionalFormat(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -175,7 +194,7 @@ func TestSuggestCommitMessageKeepsConventionalNonReleaseType(t *testing.T) {
 	ag := &stubAgent{result: &Result{
 		Output: json.RawMessage(`{"subject":"refactor: improve CLI output"}`),
 	}}
-	got, err := SuggestCommitMessage(context.Background(), ag, "/tmp")
+	got, err := SuggestCommitMessage(context.Background(), ag, "/tmp", conventionalFormat(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -188,7 +207,7 @@ func TestSuggestCommitMessagePromptRequiresReleaseTypesForProductImpact(t *testi
 	ag := &stubAgent{result: &Result{
 		Output: json.RawMessage(`{"subject":"fix: improve CLI output"}`),
 	}}
-	if _, err := SuggestCommitMessage(context.Background(), ag, "/tmp"); err != nil {
+	if _, err := SuggestCommitMessage(context.Background(), ag, "/tmp", conventionalFormat(t)); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !strings.Contains(ag.gotPrompt, "user-facing product impact") {
@@ -203,7 +222,7 @@ func TestSuggestCommitMessageEmpty(t *testing.T) {
 	ag := &stubAgent{result: &Result{
 		Output: json.RawMessage(`{"subject":"   "}`),
 	}}
-	_, err := SuggestCommitMessage(context.Background(), ag, "/tmp")
+	_, err := SuggestCommitMessage(context.Background(), ag, "/tmp", conventionalFormat(t))
 	if err == nil {
 		t.Fatal("expected error for empty subject")
 	}
@@ -213,7 +232,7 @@ func TestSuggestBranchAndCommit(t *testing.T) {
 	ag := &stubAgent{result: &Result{
 		Output: json.RawMessage(`{"branch":"feat/onboarding-wizard","subject":"feat(cli): add onboarding wizard"}`),
 	}}
-	branch, subject, err := SuggestBranchAndCommit(context.Background(), ag, "/tmp/repo")
+	branch, subject, err := SuggestBranchAndCommit(context.Background(), ag, "/tmp/repo", conventionalFormat(t))
 	if err != nil {
 		t.Fatalf("SuggestBranchAndCommit failed: %v", err)
 	}
@@ -238,7 +257,7 @@ func TestSuggestBranchAndCommitSanitizes(t *testing.T) {
 	ag := &stubAgent{result: &Result{
 		Output: json.RawMessage(`{"branch":"FEAT/New Thing","subject":"feat(cli): clean up thing\n\nbody paragraph"}`),
 	}}
-	branch, subject, err := SuggestBranchAndCommit(context.Background(), ag, "/tmp")
+	branch, subject, err := SuggestBranchAndCommit(context.Background(), ag, "/tmp", conventionalFormat(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -254,7 +273,7 @@ func TestSuggestBranchAndCommitEmptyBranchErrors(t *testing.T) {
 	ag := &stubAgent{result: &Result{
 		Output: json.RawMessage(`{"branch":"","subject":"feat: something"}`),
 	}}
-	if _, _, err := SuggestBranchAndCommit(context.Background(), ag, "/tmp"); err == nil {
+	if _, _, err := SuggestBranchAndCommit(context.Background(), ag, "/tmp", conventionalFormat(t)); err == nil {
 		t.Fatal("expected error when branch is empty")
 	}
 }
@@ -265,7 +284,7 @@ func TestSuggestBranchAndCommitEmptySubjectReturnsBranch(t *testing.T) {
 	ag := &stubAgent{result: &Result{
 		Output: json.RawMessage(`{"branch":"fix/bug","subject":""}`),
 	}}
-	branch, subject, err := SuggestBranchAndCommit(context.Background(), ag, "/tmp")
+	branch, subject, err := SuggestBranchAndCommit(context.Background(), ag, "/tmp", conventionalFormat(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -279,7 +298,7 @@ func TestSuggestBranchAndCommitEmptySubjectReturnsBranch(t *testing.T) {
 
 func TestSuggestBranchAndCommitAgentError(t *testing.T) {
 	ag := &stubAgent{err: errors.New("boom")}
-	if _, _, err := SuggestBranchAndCommit(context.Background(), ag, "/tmp"); err == nil {
+	if _, _, err := SuggestBranchAndCommit(context.Background(), ag, "/tmp", conventionalFormat(t)); err == nil {
 		t.Fatal("expected error from agent failure")
 	}
 }
@@ -287,4 +306,108 @@ func TestSuggestBranchAndCommitAgentError(t *testing.T) {
 func jsonQuote(s string) string {
 	b, _ := json.Marshal(s)
 	return string(b)
+}
+
+func TestSuggestCommitMessageUsesConfiguredFormat(t *testing.T) {
+	ag := &stubAgent{result: &Result{
+		Output: json.RawMessage(`{"subject":"Add onboarding wizard"}`),
+	}}
+	got, err := SuggestCommitMessage(context.Background(), ag, "/tmp", resolveFormat(t, title.StyleFree))
+	if err != nil {
+		t.Fatalf("SuggestCommitMessage failed: %v", err)
+	}
+	if got != "Add onboarding wizard" {
+		t.Fatalf("subject = %q, want it unchanged under the free style", got)
+	}
+}
+
+func TestSuggestCommitMessagePromptCarriesFormatRule(t *testing.T) {
+	cases := []struct {
+		style      title.Style
+		wantInside []string
+		wantAbsent []string
+	}{
+		{
+			style:      title.StyleExfresso,
+			wantInside: []string{"[sc-<number>]", "read the current branch"},
+			wantAbsent: []string{"conventional commit format"},
+		},
+		{
+			style:      title.StyleConventional,
+			wantInside: []string{"conventional commit format", "must use feat or fix"},
+			wantAbsent: []string{"[sc-<number>]", "read the current branch"},
+		},
+		{
+			style:      title.StyleFree,
+			wantAbsent: []string{"conventional commit format", "[sc-<number>]"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(string(tc.style), func(t *testing.T) {
+			ag := &stubAgent{result: &Result{Output: json.RawMessage(`{"subject":"a subject"}`)}}
+			if _, err := SuggestCommitMessage(context.Background(), ag, "/tmp", resolveFormat(t, tc.style)); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			for _, want := range tc.wantInside {
+				if !strings.Contains(ag.gotPrompt, want) {
+					t.Errorf("prompt omits %q, got:\n%s", want, ag.gotPrompt)
+				}
+			}
+			for _, absent := range tc.wantAbsent {
+				if strings.Contains(ag.gotPrompt, absent) {
+					t.Errorf("prompt should not contain %q, got:\n%s", absent, ag.gotPrompt)
+				}
+			}
+			// Format-independent rules stay in every prompt.
+			for _, want := range []string{"One line only, under 72 characters", "Do not invent behavior"} {
+				if !strings.Contains(ag.gotPrompt, want) {
+					t.Errorf("prompt omits the format-independent rule %q, got:\n%s", want, ag.gotPrompt)
+				}
+			}
+		})
+	}
+}
+
+func TestSuggestBranchAndCommitPromptCarriesFormatRule(t *testing.T) {
+	ag := &stubAgent{result: &Result{
+		Output: json.RawMessage(`{"branch":"sc-1234-onboarding-wizard","subject":"[sc-1234] Add onboarding wizard"}`),
+	}}
+	branch, subject, err := SuggestBranchAndCommit(context.Background(), ag, "/tmp", resolveFormat(t, title.StyleExfresso))
+	if err != nil {
+		t.Fatalf("SuggestBranchAndCommit failed: %v", err)
+	}
+	if branch != "sc-1234-onboarding-wizard" {
+		t.Errorf("branch = %q", branch)
+	}
+	if subject != "[sc-1234] Add onboarding wizard" {
+		t.Errorf("subject = %q, want it unchanged", subject)
+	}
+	if !strings.Contains(ag.gotPrompt, "[sc-<number>]") {
+		t.Errorf("prompt omits the configured format rule, got:\n%s", ag.gotPrompt)
+	}
+}
+
+// The wizard cannot supply a branch: it asks for the branch and the subject in
+// one call, so the agent is told to read the branch itself when the format takes
+// a token from it. sanitizeCommitSubject therefore normalizes with no branch and
+// must not invent a token.
+func TestSuggestCommitSubjectInventsNoTokenWithoutABranch(t *testing.T) {
+	ag := &stubAgent{result: &Result{
+		Output: json.RawMessage(`{"subject":"Add onboarding wizard"}`),
+	}}
+	got, err := SuggestCommitMessage(context.Background(), ag, "/tmp", resolveFormat(t, title.StyleExfresso))
+	if err != nil {
+		t.Fatalf("SuggestCommitMessage failed: %v", err)
+	}
+	if got != "Add onboarding wizard" {
+		t.Fatalf("subject = %q, want no invented story number", got)
+	}
+}
+
+// Branch naming is deliberately not configurable in this pass, but the exfresso
+// style depends on the branch carrying the story token, so the branch rules say so.
+func TestBranchNameRulesMentionTheStoryToken(t *testing.T) {
+	if !strings.Contains(branchNameRules, "sc-") {
+		t.Errorf("branchNameRules should state the sc-<number> coupling, got:\n%s", branchNameRules)
+	}
 }

@@ -19,8 +19,20 @@ import (
 	"github.com/kunchenguid/no-mistakes/internal/config"
 	"github.com/kunchenguid/no-mistakes/internal/db"
 	"github.com/kunchenguid/no-mistakes/internal/pipeline"
+	"github.com/kunchenguid/no-mistakes/internal/title"
 	"github.com/kunchenguid/no-mistakes/internal/types"
 )
+
+// conventionalTitleFormatForTest is the resolved conventional-commit title
+// format. It panics rather than taking a *testing.T so it can be used in a
+// struct literal.
+func conventionalTitleFormatForTest() title.Format {
+	f, err := title.Resolve(string(title.StyleConventional), "", "", "", "")
+	if err != nil {
+		panic(err)
+	}
+	return f
+}
 
 type mockAgent struct {
 	name  string
@@ -156,11 +168,15 @@ func newTestContext(t *testing.T, ag agent.Agent, workDir, baseSHA, headSHA stri
 		EvidenceDir: filepath.Join(t.TempDir(), "evidence", "run-1"),
 		WorkDir:     workDir,
 		Agent:       ag,
-		Config:      &config.Config{Agent: types.AgentClaude, Commands: cmds},
-		DB:          database,
-		Log:         func(s string) {},
-		LogChunk:    func(s string) {},
-		LogFile:     func(s string) {},
+		// The title format defaults to the conventional style here, not to the
+		// product default: it keeps every pre-existing assertion in this package
+		// testing the behaviour it was written for. Tests that exercise another
+		// style set sctx.Config.Title themselves (see mustTitleFormat).
+		Config:   &config.Config{Agent: types.AgentClaude, Commands: cmds, Title: conventionalTitleFormatForTest()},
+		DB:       database,
+		Log:      func(s string) {},
+		LogChunk: func(s string) {},
+		LogFile:  func(s string) {},
 	}
 }
 

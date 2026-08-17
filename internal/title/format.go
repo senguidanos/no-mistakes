@@ -384,6 +384,14 @@ func (f Format) Style() Style {
 	return f.style
 }
 
+// UsesBranchToken reports whether this format derives part of the title from the
+// branch name. A caller that cannot supply a branch - the wizard proposes the
+// branch and the commit subject in one agent call, before the branch exists - uses
+// it to decide whether to tell the agent to read the branch itself.
+func (f Format) UsesBranchToken() bool {
+	return f.branchToken != nil && f.tmpl != nil
+}
+
 // Compliant reports whether title already satisfies the format. A style with no
 // pattern treats every title as compliant.
 func (f Format) Compliant(title string) bool {

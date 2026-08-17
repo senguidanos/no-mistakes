@@ -122,6 +122,38 @@ func TestExfressoPromptRuleDescribesTheFormat(t *testing.T) {
 	}
 }
 
+// UsesBranchToken lets a caller that cannot know the branch yet (the wizard
+// suggests a branch and a commit subject in one call) tell the agent to read the
+// branch itself.
+func TestUsesBranchToken(t *testing.T) {
+	if !mustResolve(t, StyleExfresso).UsesBranchToken() {
+		t.Error("exfresso should report that it reads a token from the branch")
+	}
+	for _, style := range []Style{StyleConventional, StyleFree} {
+		if mustResolve(t, style).UsesBranchToken() {
+			t.Errorf("%s should not report a branch token", style)
+		}
+	}
+	var zero Format
+	if zero.UsesBranchToken() {
+		t.Error("the zero value should not report a branch token")
+	}
+	withToken, err := resolveCustomStyle(t, `^\[x-\d+\] .+$`, `(x-\d+)`, "[{{.Token}}] {{.Description}}", "rule")
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+	if !withToken.UsesBranchToken() {
+		t.Error("a custom style with a branch token should report one")
+	}
+	withoutToken, err := resolveCustomStyle(t, `^\[x-\d+\] .+$`, "", "", "rule")
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+	if withoutToken.UsesBranchToken() {
+		t.Error("a custom style with no branch token should not report one")
+	}
+}
+
 // --- conventional -----------------------------------------------------------
 
 // conventionalGolden freezes upstream v1.53.0 title behavior. It is the guard

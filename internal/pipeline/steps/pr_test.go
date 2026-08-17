@@ -18,6 +18,7 @@ import (
 	"github.com/kunchenguid/no-mistakes/internal/db"
 	"github.com/kunchenguid/no-mistakes/internal/pipeline"
 	"github.com/kunchenguid/no-mistakes/internal/scm"
+	"github.com/kunchenguid/no-mistakes/internal/title"
 	"github.com/kunchenguid/no-mistakes/internal/types"
 )
 
@@ -2119,6 +2120,176 @@ func TestPRStep_AgentConventionalNonReleaseTitlePassesThrough(t *testing.T) {
 	ghLog := string(logData)
 	if !strings.Contains(ghLog, "--title refactor(cli): improve CLI output --body") {
 		t.Fatalf("expected conventional agent PR title to pass through unchanged, got:\n%s", ghLog)
+	}
+}
+
+// runPRStepWithTitleStyle drives the PR step with a configured title style and
+// branch, returning the fake gh invocation log.
+func runPRStepWithTitleStyle(t *testing.T, style title.Style, branch, agentTitle string) string {
+	t.Helper()
+	dir, baseSHA, headSHA := setupGitRepo(t)
+	env, logFile := fakeGH(t, "")
+
+	payload, err := json.Marshal(prContent{Title: agentTitle, Body: "## What Changed\n\n- a change"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ag := &mockAgent{
+		name: "test",
+		runFn: func(ctx context.Context, opts agent.RunOpts) (*agent.Result, error) {
+			return &agent.Result{Output: json.RawMessage(payload)}, nil
+		},
+	}
+	sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
+	sctx.Env = env
+	sctx.Run.Branch = branch
+	sctx.Config.Title = mustTitleFormat(t, style)
+
+	step := &PRStep{}
+	if _, err := step.Execute(sctx); err != nil {
+		t.Fatal(err)
+	}
+	logData, err := os.ReadFile(logFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(logData)
+}
+
+func mustTitleFormat(t *testing.T, style title.Style) title.Format {
+	t.Helper()
+	f, err := title.Resolve(string(style), "", "", "", "")
+	if err != nil {
+		t.Fatalf("resolve title style %q: %v", style, err)
+	}
+	return f
+}
+
+// Acceptance criterion 1: the exfresso style takes the story number from the
+// branch and adds no type prefix.
+func TestPRStep_ExfressoStylePrefixesTitleFromBranchToken(t *testing.T) {
+	t.Parallel()
+	ghLog := runPRStepWithTitleStyle(t, title.StyleExfresso, "refs/heads/sc-1234-dim-weight-rounding", "Add dim-weight rounding")
+	if !strings.Contains(ghLog, "--title [sc-1234] Add dim-weight rounding --body") {
+		t.Fatalf("expected the branch story number to prefix the title, got:\n%s", ghLog)
+	}
+	if strings.Contains(ghLog, "chore:") || strings.Contains(ghLog, "feat:") {
+		t.Fatalf("expected no conventional type prefix under the exfresso style, got:\n%s", ghLog)
+	}
+}
+
+// Acceptance criterion 3.
+func TestPRStep_ExfressoStyleKeepsCompliantTitleUnchanged(t *testing.T) {
+	t.Parallel()
+	ghLog := runPRStepWithTitleStyle(t, title.StyleExfresso, "refs/heads/sc-1234-dim-weight-rounding", "[sc-1234] Add dim-weight rounding")
+	if !strings.Contains(ghLog, "--title [sc-1234] Add dim-weight rounding --body") {
+		t.Fatalf("expected a compliant title to pass through unchanged, got:\n%s", ghLog)
+	}
+}
+
+// Acceptance criterion 2: no token in the branch means no invented token.
+func TestPRStep_ExfressoStyleWithoutBranchTokenLeavesTitleUnprefixed(t *testing.T) {
+	t.Parallel()
+	ghLog := runPRStepWithTitleStyle(t, title.StyleExfresso, "refs/heads/dim-weight-rounding", "Add dim-weight rounding")
+	if !strings.Contains(ghLog, "--title Add dim-weight rounding --body") {
+		t.Fatalf("expected an unprefixed title, got:\n%s", ghLog)
+	}
+	if strings.Contains(ghLog, "[sc-") {
+		t.Fatalf("expected no invented story number, got:\n%s", ghLog)
+	}
+}
+
+// Acceptance criterion 5.
+func TestPRStep_FreeStyleLeavesTitleAlone(t *testing.T) {
+	t.Parallel()
+	ghLog := runPRStepWithTitleStyle(t, title.StyleFree, "refs/heads/sc-1234-rounding", "Improve pipeline header UX")
+	if !strings.Contains(ghLog, "--title Improve pipeline header UX --body") {
+		t.Fatalf("expected the free style to leave the title alone, got:\n%s", ghLog)
+	}
+}
+
+func TestPRStep_TitlePromptCarriesConfiguredFormatRule(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		style      title.Style
+		wantInside []string
+		wantAbsent []string
+	}{
+		{
+			style:      title.StyleExfresso,
+			wantInside: []string{"[sc-<number>]", "Never invent or guess a story number"},
+			wantAbsent: []string{"conventional commit format", "Valid types: feat"},
+		},
+		{
+			style:      title.StyleConventional,
+			wantInside: []string{"conventional commit format", "must use feat or fix", "real package/module name"},
+			wantAbsent: []string{"[sc-<number>]"},
+		},
+		{
+			style:      title.StyleFree,
+			wantAbsent: []string{"conventional commit format", "[sc-<number>]"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(string(tc.style), func(t *testing.T) {
+			t.Parallel()
+			dir, baseSHA, headSHA := setupGitRepo(t)
+			ag := &mockAgent{
+				name: "test",
+				runFn: func(ctx context.Context, opts agent.RunOpts) (*agent.Result, error) {
+					payload := json.RawMessage(`{"title":"[sc-1] a change","body":"## What Changed\n\n- a change"}`)
+					return &agent.Result{Output: payload}, nil
+				},
+			}
+			sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
+			sctx.Config.Title = mustTitleFormat(t, tc.style)
+
+			step := &PRStep{}
+			if _, err := step.buildPRContent(sctx, "sc-1-a-change", baseSHA, 0); err != nil {
+				t.Fatal(err)
+			}
+			prompt := ag.calls[0].Prompt
+			for _, want := range tc.wantInside {
+				if !strings.Contains(prompt, want) {
+					t.Errorf("prompt omits %q, got:\n%s", want, prompt)
+				}
+			}
+			for _, absent := range tc.wantAbsent {
+				if strings.Contains(prompt, absent) {
+					t.Errorf("prompt should not contain %q, got:\n%s", absent, prompt)
+				}
+			}
+			// The branch-name instruction is format-independent and stays.
+			if !strings.Contains(prompt, "Do not use the raw branch name") {
+				t.Errorf("prompt omits the raw-branch-name instruction, got:\n%s", prompt)
+			}
+		})
+	}
+}
+
+// The JSON schema description must not name a format; the specific rule reaches
+// the agent through the prompt instead.
+func TestPRContentSchemaTitleDescriptionIsFormatNeutral(t *testing.T) {
+	t.Parallel()
+	schema := string(prContentSchema)
+	for _, absent := range []string{"Conventional", "conventional", "fix(scope)"} {
+		if strings.Contains(schema, absent) {
+			t.Errorf("prContentSchema still names a title format (%q): %s", absent, schema)
+		}
+	}
+}
+
+func TestPRStep_FallbackTitleUsesConfiguredFormat(t *testing.T) {
+	t.Parallel()
+	dir, baseSHA, headSHA := setupGitRepo(t)
+	sctx := newTestContextWithDBRecords(t, &mockAgent{name: "test"}, dir, baseSHA, headSHA, config.Commands{})
+	sctx.Config.Title = mustTitleFormat(t, title.StyleExfresso)
+	sctx.Run.Branch = "refs/heads/sc-1234-rounding"
+
+	content := fallbackPRContent(sctx, "A\tinternal/pipeline/steps/pr.go", "", "", "", 0)
+
+	if want := "[sc-1234] update pull request"; content.Title != want {
+		t.Errorf("fallback title = %q, want %q", content.Title, want)
 	}
 }
 
