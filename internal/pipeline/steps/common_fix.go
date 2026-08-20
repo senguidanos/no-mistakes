@@ -131,9 +131,9 @@ func commitAgentFixes(sctx *pipeline.StepContext, stepName types.StepName, summa
 	if summary == "" {
 		summary = "apply fixes"
 	}
-	commitMessage, err := sctx.Config.Commit.RenderFixMessage(stepName, summary)
+	commitMessage, err := fixCommitSubject(sctx, stepName, summary)
 	if err != nil {
-		return fmt.Errorf("render %s fix commit message: %w", stepName, err)
+		return err
 	}
 	if _, err := git.Run(ctx, sctx.WorkDir, "add", "-A"); err != nil {
 		return fmt.Errorf("stage %s changes: %w", stepName, err)
@@ -238,4 +238,29 @@ func executeFixMode(sctx *pipeline.StepContext, stepName types.StepName, opts fi
 		return "", err
 	}
 	return summary, nil
+}
+
+// fixCommitSubject builds the subject for a pipeline-authored fix commit.
+//
+// When the configured title format derives a story token from the branch, the
+// subject is built the same way a pull-request title is, so both carry the one
+// convention the repository uses -- "[sc-1234] Description" -- rather than the
+// commit picking up a second shape of its own. Normalize never invents a token,
+// so a branch without one yields the bare summary.
+//
+// Any other style keeps commit.fix_message, which is what upstream configures
+// and what a repository on Conventional Commits needs: there the subject has to
+// carry a type and scope that a summary alone cannot supply.
+func fixCommitSubject(sctx *pipeline.StepContext, stepName types.StepName, summary string) (string, error) {
+	if sctx.Config.Title.UsesBranchToken() {
+		branch := strings.TrimPrefix(sctx.Run.Branch, "refs/heads/")
+		if subject := sctx.Config.Title.Normalize(summary, branch); subject != "" {
+			return subject, nil
+		}
+	}
+	subject, err := sctx.Config.Commit.RenderFixMessage(stepName, summary)
+	if err != nil {
+		return "", fmt.Errorf("render %s fix commit message: %w", stepName, err)
+	}
+	return subject, nil
 }
