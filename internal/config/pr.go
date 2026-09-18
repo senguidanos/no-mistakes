@@ -185,3 +185,14 @@ func (p PR) RenderTitle(branch, title string) (string, error) {
 	}
 	return result, nil
 }
+
+// GlobalPRRaw is the global half of the pr block.
+//
+// Only title_format is settable here. A title convention belongs to the person
+// running the pipeline as much as to any one repository, and carrying it in the
+// global config keeps repositories free of a .no-mistakes.yaml that exists only
+// to restate it. pr.template and pr.publish_intent stay repo-only: they are one
+// repository's publication policy and have no machine-wide meaning.
+type GlobalPRRaw struct {
+	TitleFormat *string `yaml:"title_format"`
+}

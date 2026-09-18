@@ -196,6 +196,11 @@ type GlobalConfig struct {
 	// value still wins over it.
 	Rebase RebaseRaw
 	Commit GlobalCommitRaw
+	// PR is the operator's own pull-request title convention. Only
+	// title_format is settable here; pr.template and pr.publish_intent are one
+	// repository's publication policy and stay repo-only. A repo value still
+	// wins over it.
+	PR     GlobalPRRaw
 	Intent IntentRaw
 	Test   TestRaw
 	// Eval is resolved at load time because it is global-only: it describes
@@ -233,6 +238,7 @@ type globalConfigRaw struct {
 	CI                      CIRaw                      `yaml:"ci"`
 	Rebase                  RebaseRaw                  `yaml:"rebase"`
 	Commit                  GlobalCommitRaw            `yaml:"commit"`
+	PR                      GlobalPRRaw                `yaml:"pr"`
 	Intent                  IntentRaw                  `yaml:"intent"`
 	Test                    TestRaw                    `yaml:"test"`
 	Eval                    EvalRaw                    `yaml:"eval"`
@@ -2054,6 +2060,11 @@ func LoadGlobalFromBytes(data []byte) (*GlobalConfig, error) {
 	if err := validateGlobalCommitRaw(raw.Commit); err != nil {
 		return nil, fmt.Errorf("parse global config: %w", err)
 	}
+	if raw.PR.TitleFormat != nil {
+		if err := validatePRTitleFormat(*raw.PR.TitleFormat); err != nil {
+			return nil, fmt.Errorf("parse global config: %w", err)
+		}
+	}
 	if err := validateTestRaw(raw.Test); err != nil {
 		return nil, fmt.Errorf("parse global config: %w", err)
 	}
@@ -2192,6 +2203,7 @@ func LoadGlobalFromBytes(data []byte) (*GlobalConfig, error) {
 	cfg.CI = raw.CI
 	cfg.Rebase = raw.Rebase
 	cfg.Commit = raw.Commit
+	cfg.PR = raw.PR
 	cfg.Intent = raw.Intent
 	cfg.Test = raw.Test
 	cfg.Providers = raw.Providers
@@ -2989,6 +3001,9 @@ func Merge(global *GlobalConfig, repo *RepoConfig) *Config {
 		BaseBranch:    strings.TrimSpace(repo.PR.BaseBranch),
 		Template:      repo.PR.Template,
 		PublishIntent: repo.PR.PublishIntent,
+	}
+	if global.PR.TitleFormat != nil {
+		pr.TitleFormat = *global.PR.TitleFormat
 	}
 	if repo.PR.TitleFormat != nil {
 		pr.TitleFormat = *repo.PR.TitleFormat
