@@ -267,6 +267,11 @@ type GlobalConfig struct {
 	// value still wins over it.
 	Rebase RebaseRaw
 	Commit GlobalCommitRaw
+	// PR is the operator's own pull-request title convention. Only
+	// title_format is settable here; pr.template and pr.publish_intent are one
+	// repository's publication policy and stay repo-only. A repo value still
+	// wins over it.
+	PR     GlobalPRRaw
 	Intent GlobalIntentRaw
 	Test   TestRaw
 	// Review carries the operator's own review guidance for every gated
@@ -317,6 +322,7 @@ type globalConfigRaw struct {
 	CI                        CIRaw                      `yaml:"ci"`
 	Rebase                    RebaseRaw                  `yaml:"rebase"`
 	Commit                    GlobalCommitRaw            `yaml:"commit"`
+	PR                        GlobalPRRaw                `yaml:"pr"`
 	Intent                    GlobalIntentRaw            `yaml:"intent"`
 	Test                      TestRaw                    `yaml:"test"`
 	Review                    OperatorReviewRaw          `yaml:"review"`
@@ -2673,6 +2679,11 @@ func LoadGlobalFromBytes(data []byte) (*GlobalConfig, error) {
 	if err := validateGlobalCommitRaw(raw.Commit); err != nil {
 		return nil, fmt.Errorf("parse global config: %w", err)
 	}
+	if raw.PR.TitleFormat != nil {
+		if err := validatePRTitleFormat(*raw.PR.TitleFormat); err != nil {
+			return nil, fmt.Errorf("parse global config: %w", err)
+		}
+	}
 	if err := validateTestRaw(raw.Test); err != nil {
 		return nil, fmt.Errorf("parse global config: %w", err)
 	}
@@ -2883,6 +2894,7 @@ func LoadGlobalFromBytes(data []byte) (*GlobalConfig, error) {
 	cfg.CI = raw.CI
 	cfg.Rebase = raw.Rebase
 	cfg.Commit = raw.Commit
+	cfg.PR = raw.PR
 	cfg.Intent = raw.Intent
 	cfg.Test = raw.Test
 	cfg.Providers = raw.Providers
@@ -3943,6 +3955,9 @@ func merge(global *GlobalConfig, repo *RepoConfig, override *RepositoryOverride)
 		Template:      repo.PR.Template,
 		PublishIntent: repo.PR.PublishIntent,
 		Appendix:      repo.PR.Appendix,
+	}
+	if global.PR.TitleFormat != nil {
+		pr.TitleFormat = *global.PR.TitleFormat
 	}
 	if override != nil {
 		if override.PR.TitleFormat != nil {
