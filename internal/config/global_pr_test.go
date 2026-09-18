@@ -64,7 +64,7 @@ func TestGlobalPRAppendixValidation(t *testing.T) {
 			t.Errorf("invalid mode %q: want pr.appendix error, got %v", mode, err)
 		}
 	}
-	for _, field := range []string{"template: template.md", "publish_intent: false", "base_branch: main", "title_format: '{{.Title}}'"} {
+	for _, field := range []string{"template: template.md", "publish_intent: false", "base_branch: main"} {
 		if _, err := LoadGlobalFromBytes([]byte("pr:\n  " + field + "\n")); err == nil {
 			t.Errorf("out-of-scope global field %q accepted", field)
 		}

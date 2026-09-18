@@ -280,6 +280,8 @@ type GlobalConfig struct {
 	// value still wins over it.
 	Rebase RebaseRaw
 	Commit GlobalCommitRaw
+	// PR is the operator's machine-wide pull-request defaults. A repository
+	// value still wins over title_format.
 	PR     GlobalPRRaw
 	Intent GlobalIntentRaw
 	Test   TestRaw
@@ -412,8 +414,13 @@ type OperatorReviewRaw struct {
 
 // GlobalPRRaw contains machine-wide PR presentation defaults.
 // Template and PublishIntent are deliberately not machine-wide settings.
+//
+// TitleFormat is here because a title convention belongs to the person running
+// the pipeline as much as to any one repository, and carrying it globally keeps
+// repositories free of a .no-mistakes.yaml that exists only to restate it.
 type GlobalPRRaw struct {
-	Appendix string `yaml:"appendix"`
+	Appendix    string  `yaml:"appendix"`
+	TitleFormat *string `yaml:"title_format"`
 }
 
 // RepositoryPRRaw contains machine-local per-repository PR defaults.
@@ -2863,6 +2870,11 @@ func LoadGlobalFromBytes(data []byte) (*GlobalConfig, error) {
 	if err := validateGlobalCommitRaw(raw.Commit); err != nil {
 		return nil, fmt.Errorf("parse global config: %w", err)
 	}
+	if raw.PR.TitleFormat != nil {
+		if err := validatePRTitleFormat(*raw.PR.TitleFormat); err != nil {
+			return nil, fmt.Errorf("parse global config: %w", err)
+		}
+	}
 	if err := validateTestRaw(raw.Test); err != nil {
 		return nil, fmt.Errorf("parse global config: %w", err)
 	}
@@ -4326,6 +4338,9 @@ func merge(global *GlobalConfig, repo *RepoConfig, override *RepositoryOverride)
 		Intent:        PRIntent{Format: repo.PR.Intent.Format, Sections: append([]string(nil), repo.PR.Intent.Sections...)},
 		PublishIntent: repo.PR.PublishIntent,
 		Appendix:      repo.PR.Appendix,
+	}
+	if global.PR.TitleFormat != nil {
+		pr.TitleFormat = *global.PR.TitleFormat
 	}
 	if override != nil {
 		if override.PR.TitleFormat != nil {
