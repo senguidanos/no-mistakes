@@ -468,6 +468,9 @@ func redactPRContent(content prContent) prContent {
 }
 
 func (s *PRStep) draftPRContent(sctx *pipeline.StepContext, branch, baseBranch, baseSHA string, provider scm.Provider, bodyLimit int) (prContent, error) {
+	if sctx.Config != nil && sctx.Config.PR.ConciseBody() {
+		return s.draftConcisePRContent(sctx, branch, baseBranch, baseSHA, provider, bodyLimit)
+	}
 	ctx := sctx.Ctx
 	diffStat, _ := git.Run(ctx, sctx.WorkDir, "diff", "--stat", baseSHA+".."+sctx.Run.HeadSHA)
 	if len(diffStat) > maxPRPromptInventoryBytes {
@@ -753,26 +756,12 @@ func (s *PRStep) buildPipelineSection(sctx *pipeline.StepContext, provider scm.P
 }
 
 func (s *PRStep) buildPipelineSectionFor(sctx *pipeline.StepContext, provider scm.Provider, owned bool) (pipelineMD, riskLine, testingMD string) {
-	steps, err := sctx.DB.GetStepsByRun(sctx.Run.ID)
-	if err != nil {
-		slog.Warn("failed to query step results for pipeline summary", "error", err)
+	steps, rounds, ok := loadRunStepRounds(sctx)
+	if !ok {
 		return "", "", ""
 	}
 
-	rounds := make(map[string][]*db.StepRound, len(steps))
-	for _, sr := range steps {
-		r, err := sctx.DB.GetRoundsByStep(sr.RoundsStepID())
-		if err != nil {
-			slog.Warn("failed to query rounds for step", "step", sr.StepName, "error", err)
-			continue
-		}
-		rounds[sr.ID] = r
-	}
-
-	policy := pipelineAttestationPolicy{}
-	if sctx.Config != nil {
-		policy.AllowTestCommandOverride = strings.TrimSpace(sctx.Config.Test.AllowApproveOverFailure)
-	}
+	policy := attestationPolicy(sctx)
 	pipelineMD, riskLine = buildPipelineSummaryFor(steps, rounds, sctx.Run.HeadSHA, provider, policy)
 	// The review conversation rides inside the Pipeline section as an ordinary
 	// `### ` group, so the existing body-budget logic can drop it whole rather
@@ -788,6 +777,33 @@ func (s *PRStep) buildPipelineSectionFor(sctx *pipeline.StepContext, provider sc
 	}
 	testingMD = buildPRTestingSummary(steps, rounds, sctx.Repo.UpstreamURL, sctx.Run.HeadSHA, sctx.WorkDir, testEvidenceDir(sctx), publishRunEvidence(sctx), provider, s.attachRunEvidenceMedia(sctx, provider, steps, rounds))
 	return pipelineMD, riskLine, testingMD
+}
+
+func loadRunStepRounds(sctx *pipeline.StepContext) ([]*db.StepResult, map[string][]*db.StepRound, bool) {
+	steps, err := sctx.DB.GetStepsByRun(sctx.Run.ID)
+	if err != nil {
+		slog.Warn("failed to query step results for pipeline summary", "error", err)
+		return nil, nil, false
+	}
+
+	rounds := make(map[string][]*db.StepRound, len(steps))
+	for _, sr := range steps {
+		r, err := sctx.DB.GetRoundsByStep(sr.RoundsStepID())
+		if err != nil {
+			slog.Warn("failed to query rounds for step", "step", sr.StepName, "error", err)
+			continue
+		}
+		rounds[sr.ID] = r
+	}
+	return steps, rounds, true
+}
+
+func attestationPolicy(sctx *pipeline.StepContext) pipelineAttestationPolicy {
+	policy := pipelineAttestationPolicy{}
+	if sctx.Config != nil {
+		policy.AllowTestCommandOverride = strings.TrimSpace(sctx.Config.Test.AllowApproveOverFailure)
+	}
+	return policy
 }
 
 // unwrapNestedPRBody detects when the agent returned the body as a

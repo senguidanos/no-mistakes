@@ -13,7 +13,7 @@ The daemon also reads `document.instructions`, `review.conversation`, `review.pa
 If the default branch cannot be fetched and resolved to a readable commit, or its present `.no-mistakes.yaml` cannot be read and parsed, the run aborts before launching an agent.
 A readable default-branch tree with no `.no-mistakes.yaml` is valid and uses defaults.
 Commit the gate-control settings you want to your default branch.
-Non-executing fields (`ignore_patterns`, core-step `auto_fix`, `commit`, `intent`, `test`, `pr.title_format`, and `providers`) are still read from the pushed branch, except `test.prepare`, `test.base_attribution`, `test.instructions`, `test.allow_approve_over_failure`, and `test.evidence.branch`.
+Non-executing fields (`ignore_patterns`, core-step `auto_fix`, `commit`, `intent`, `test`, `pr.title_format`, `pr.body`, and `providers`) are still read from the pushed branch, except `test.prepare`, `test.base_attribution`, `test.instructions`, `test.allow_approve_over_failure`, and `test.evidence.branch`.
 
 If you genuinely want per-branch `commands` and `agent` (for example, a single-developer repo where you trust your own feature branches), opt in with [`allow_repo_commands: true`](#allow_repo_commands) in this same file on your default branch. This re-enables the previous behavior with eyes open. The switch is read only from the trusted default-branch copy, so a contributor cannot self-enable it from a pushed branch.
 :::
@@ -344,6 +344,22 @@ Providers can impose lower publication limits. GitLab titles are checked at its 
 If a format requires `{{.Branch}}` but the branch pattern finds no identifier, PR publication fails safely instead of publishing a malformed title.
 
 When this setting is omitted, no-mistakes keeps its default conventional commit title behavior, including release type guidance and title tightening.
+
+### pr.body
+
+Choose how much the generated pull request body publishes.
+
+| | |
+| --- | --- |
+| Type | `string`: `full` or `concise` |
+| Default | `full` |
+| Trust | Pushed branch, like other non-executing repository conventions; overrides the [global `pr.body`](/no-mistakes/reference/global-config/#prbody) |
+
+`full` publishes the `Intent`, `What Changed`, `Risk Assessment`, `Testing`, and `Pipeline` sections described under [the PR step](/no-mistakes/reference/pipeline-steps/), shaped by [`pr.appendix`](#prappendix).
+`concise` publishes only a short description of the change: one or two sentences on what was wrong or missing and what the branch does about it, a few bullets when they help a reviewer read the diff, and a note on a design decision only when a reviewer would otherwise question it.
+The hidden pipeline attestation comment is still appended on hosts whose bodies can hide it, so CI repairs and the required check keep working.
+Intent, risk, and test evidence are still recorded and still inform drafting; they are just not published in the body, and `pr.appendix` has no effect.
+`pr.template` takes precedence over this setting.
 For a machine-local title convention that does not require repository configuration, see global [`repository_overrides`](/no-mistakes/reference/global-config/#repository_overrides).
 
 ### commands.prepare

@@ -267,10 +267,10 @@ type GlobalConfig struct {
 	// value still wins over it.
 	Rebase RebaseRaw
 	Commit GlobalCommitRaw
-	// PR is the operator's own pull-request title convention. Only
-	// title_format is settable here; pr.template and pr.publish_intent are one
-	// repository's publication policy and stay repo-only. A repo value still
-	// wins over it.
+	// PR is the operator's own pull-request title and body convention. Only
+	// title_format and body are settable here; pr.template and
+	// pr.publish_intent are one repository's publication policy and stay
+	// repo-only. A repo value still wins over it.
 	PR     GlobalPRRaw
 	Intent GlobalIntentRaw
 	Test   TestRaw
@@ -518,6 +518,8 @@ type PRRaw struct {
 	// TitleFormat controls PR title rendering when set. It is a non-executing
 	// repository convention and is therefore read from the pushed branch.
 	TitleFormat *string `yaml:"title_format"`
+	// Body selects how much the PR body publishes: full or concise.
+	Body *string `yaml:"body"`
 }
 
 // PathInstruction is one glob-scoped block of review guidance. Path follows the
@@ -1025,6 +1027,8 @@ type PR struct {
 	// Appendix is full, collapsed, or minimal. Empty preserves full.
 	Appendix    string
 	TitleFormat string
+	// Body is PRBodyFull or PRBodyConcise. Empty means PRBodyFull.
+	Body string
 }
 
 // Document is the resolved document-step config. Instructions come from the
@@ -2684,6 +2688,11 @@ func LoadGlobalFromBytes(data []byte) (*GlobalConfig, error) {
 			return nil, fmt.Errorf("parse global config: %w", err)
 		}
 	}
+	if raw.PR.Body != nil {
+		if err := validatePRBody(*raw.PR.Body); err != nil {
+			return nil, fmt.Errorf("parse global config: %w", err)
+		}
+	}
 	if err := validateTestRaw(raw.Test); err != nil {
 		return nil, fmt.Errorf("parse global config: %w", err)
 	}
@@ -3103,6 +3112,11 @@ func validatePRRaw(pr PRRaw) error {
 	}
 	if err := validatePRAppendix(pr.Appendix); err != nil {
 		return err
+	}
+	if pr.Body != nil {
+		if err := validatePRBody(*pr.Body); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -3972,6 +3986,12 @@ func merge(global *GlobalConfig, repo *RepoConfig, override *RepositoryOverride)
 	}
 	if repo.PR.TitleFormat != nil {
 		pr.TitleFormat = *repo.PR.TitleFormat
+	}
+	if global.PR.Body != nil {
+		pr.Body = *global.PR.Body
+	}
+	if repo.PR.Body != nil {
+		pr.Body = *repo.PR.Body
 	}
 
 	cfg := &Config{

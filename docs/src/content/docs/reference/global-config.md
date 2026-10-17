@@ -1330,6 +1330,22 @@ Recovery appends a new snapshot of the configuration it resolves, including remo
 A snapshot write failure stops execution before checks run.
 The file is private local evidence, restricted to owner-only permissions on POSIX on every write (including a file left from an earlier snapshot) and excluded from PR and test-evidence publication.
 
+### pr.body
+
+Choose how much the generated pull request body publishes, for every repository that does not set its own [`pr.body`](/no-mistakes/reference/repo-config/#prbody).
+
+| | |
+| --- | --- |
+| Type | `string`: `full` or `concise` |
+| Default | `full` |
+
+`concise` publishes only a short description of the change and the hidden pipeline attestation; `full` adds the Intent, Risk Assessment, Testing, and Pipeline sections.
+
+```yaml
+pr:
+  body: concise
+```
+
 ### intent
 
 Transcript-based user-intent extraction settings.

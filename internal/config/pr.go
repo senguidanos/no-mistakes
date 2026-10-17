@@ -188,11 +188,36 @@ func (p PR) RenderTitle(branch, title string) (string, error) {
 
 // GlobalPRRaw is the global half of the pr block.
 //
-// Only title_format is settable here. A title convention belongs to the person
-// running the pipeline as much as to any one repository, and carrying it in the
-// global config keeps repositories free of a .no-mistakes.yaml that exists only
-// to restate it. pr.template and pr.publish_intent stay repo-only: they are one
-// repository's publication policy and have no machine-wide meaning.
+// Only title_format and body are settable here. Both are conventions that
+// belong to the person running the pipeline as much as to any one repository,
+// and carrying them in the global config keeps repositories free of a
+// .no-mistakes.yaml that exists only to restate them. pr.template and
+// pr.publish_intent stay repo-only: they are one repository's publication
+// policy and have no machine-wide meaning.
 type GlobalPRRaw struct {
 	TitleFormat *string `yaml:"title_format"`
+	Body        *string `yaml:"body"`
+}
+
+const (
+	// PRBodyFull publishes the drafted summary together with the Intent, Risk
+	// Assessment, Testing, and Pipeline sections.
+	PRBodyFull = "full"
+	// PRBodyConcise publishes only the drafted description of the change.
+	PRBodyConcise = "concise"
+)
+
+func validatePRBody(body string) error {
+	switch body {
+	case PRBodyFull, PRBodyConcise:
+		return nil
+	default:
+		return fmt.Errorf("pr.body must be %q or %q, got %q", PRBodyFull, PRBodyConcise, body)
+	}
+}
+
+// ConciseBody reports whether the PR body carries only the description of the
+// change.
+func (p PR) ConciseBody() bool {
+	return p.Body == PRBodyConcise
 }
